@@ -1,0 +1,5 @@
+sysdig (0.1.73-1) unstable; urgency=low
+
+  * Initial release (Closes: #743819)
+
+ -- Evgeni Golov <evgeni@debian.org>  Sun, 06 Apr 2014 21:57:44 +0200

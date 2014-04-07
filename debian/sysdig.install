@@ -1,0 +1,3 @@
+usr/share/sysdig/chisels/*.lua
+usr/share/man
+usr/bin/sysdig

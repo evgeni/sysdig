@@ -1,0 +1,93 @@
+From 7ff19bdf9c27d5e4dde2ad410d33148df818dac3 Mon Sep 17 00:00:00 2001
+From: Evgeni Golov <evgeni@golov.de>
+Date: Sun, 6 Apr 2014 13:27:00 +0200
+Subject: [PATCH] allow building with the system jsoncpp instead of the bundled
+ one
+
+now we can build with the jsoncpp of the system by passing
+ -DUSE_BUNDLED_JSONCPP=OFF
+or even use an own jsoncpp with
+ -DUSE_BUNDLED_JSONCPP=OFF -DJSONCPP_PREFIX=/opt/superjson
+
+for backwards compatibility, build the bundled version by default
+---
+ CMakeLists.txt                    | 32 ++++++++++++++++++++++++++++++++
+ userspace/libsinsp/CMakeLists.txt |  8 ++++----
+ 2 files changed, 36 insertions(+), 4 deletions(-)
+
+Index: sysdig-0.1.73/CMakeLists.txt
+===================================================================
+--- sysdig-0.1.73.orig/CMakeLists.txt	2014-04-06 22:20:45.817989998 +0200
++++ sysdig-0.1.73/CMakeLists.txt	2014-04-06 22:20:45.813993226 +0200
+@@ -12,6 +12,38 @@
+ 
+ set (LUAJIT_SRC ${PROJECT_SOURCE_DIR}/third-party/LuaJIT-2.0.2)
+ 
++option(USE_BUNDLED_JSONCPP "Enable building of the bundled jsoncpp" ON)
++option(JSONCPP_PREFIX "Build with jsoncpp at the given path" "")
++
++if (JSONCPP_PREFIX AND USE_BUNDLED_JSONCPP)
++	message (FATAL_ERROR "You must set either JSONCPP_PREFIX or USE_BUNDLED_JSONCPP "
++			     "not both.")
++endif()
++
++set (JSONCPP_SRC ${PROJECT_SOURCE_DIR}/userspace/libsinsp/third-party/jsoncpp)
++
++if (JSONCPP_PREFIX)
++	find_path (JSONCPP_INCLUDE json/json.h ${JSONCPP_PREFIX} NO_DEFAULT_PATH)
++	find_library (JSONCPP_LIB NAMES jsoncpp PATHS ${JSONCPP_PREFIX} NO_DEFAULT_PATH)
++	if (JSONCPP_INCLUDE AND JSONCPP_LIB)
++		message (STATUS "Found jsoncpp: include: ${JSONCPP_INCLUDE}, lib: ${JSONCPP_LIB}")
++	else()
++		message (FATAL_ERROR "Couldn't find jsoncpp in '${JSONCPP_PREFIX}'")
++	endif()
++elseif (NOT USE_BUNDLED_JSONCPP)
++	find_path (JSONCPP_INCLUDE json/json.h PATH_SUFFIXES jsoncpp)
++	find_library (JSONCPP_LIB NAMES jsoncpp)
++	if (JSONCPP_INCLUDE AND JSONCPP_LIB)
++		message (STATUS "Found jsoncpp: include: ${JSONCPP_INCLUDE}, lib: ${JSONCPP_LIB}")
++	else()
++		message (FATAL_ERROR "Couldn't find system jsoncpp")
++	endif()
++else()
++	set (JSONCPP_INCLUDE ${JSONCPP_SRC})
++	set (JSONCPP_LIB_SRC ${JSONCPP_SRC}/jsoncpp.cpp)
++	message (STATUS "Using bundled jsoncpp in '${JSONCPP_SRC}'")
++endif()
++
+ if(NOT WIN32)
+ 
+ 	set(SYSDIG_DEBUG_FLAGS "-D_DEBUG")
+Index: sysdig-0.1.73/userspace/libsinsp/CMakeLists.txt
+===================================================================
+--- sysdig-0.1.73.orig/userspace/libsinsp/CMakeLists.txt	2014-04-06 22:20:45.817989998 +0200
++++ sysdig-0.1.73/userspace/libsinsp/CMakeLists.txt	2014-04-06 22:20:45.813993226 +0200
+@@ -1,8 +1,7 @@
+ include_directories(./)
+ include_directories(../../common)
+ include_directories(../libscap)
+-include_directories(third-party/jsoncpp)
+-include_directories(third-party/jsoncpp)
++include_directories(${JSONCPP_INCLUDE})
+ include_directories(${LUAJIT_INCLUDE})
+ 
+ add_library(sinsp STATIC
+@@ -15,7 +14,7 @@
+ 	filterchecks.cpp
+ 	ifinfo.cpp
+ 	internal_metrics.cpp
+-	third-party/jsoncpp/jsoncpp.cpp
++	${JSONCPP_LIB_SRC}
+ 	logger.cpp
+ 	parsers.cpp
+ 	threadinfo.cpp
+@@ -24,7 +23,8 @@
+ 	utils.cpp)
+ 
+ target_link_libraries(sinsp 
+-	scap)
++	scap
++	${JSONCPP_LIB})
+ 
+ if(NOT WIN32)
+ 	add_dependencies(sinsp luajit)
