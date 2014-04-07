@@ -1,4 +1,2 @@
-allow-building-with-the-system-LuaJIT-instead-of-the.patch
-allow-building-with-the-system-jsoncpp-instead-of-th.patch
 make-building-the-driver-optional.patch
 honour-already-set-C-XX-_FLAGS.patch
