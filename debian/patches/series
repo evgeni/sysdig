@@ -1,2 +1,1 @@
 make-building-the-driver-optional.patch
-honour-already-set-C-XX-_FLAGS.patch
