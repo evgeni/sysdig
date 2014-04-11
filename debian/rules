@@ -19,12 +19,7 @@ sver:=$(shell dpkg-parsechangelog -SVersion |sed -r 's/-[^-]+$$//')
 	dh $@ --with dkms
 
 override_dh_auto_configure:
-	dh_auto_configure -- -DUSE_BUNDLED_JSONCPP=OFF -DUSE_BUNDLED_LUAJIT=OFF -DBUILD_DRIVER=OFF
-
-override_dh_auto_install:
-	dh_auto_install
-	dh_installdirs -psysdig-dkms usr/src/sysdig-$(sver)
-	install -m644 driver/*.c driver/*.h driver/Makefile debian/sysdig-dkms/usr/src/sysdig-$(sver)
+	dh_auto_configure -- -DUSE_BUNDLED_JSONCPP=OFF -DUSE_BUNDLED_LUAJIT=OFF -DBUILD_DRIVER=OFF -DSYSDIG_VERSION="$(sver)"
 
 override_dh_dkms:
-	dh_dkms -V
+	dh_dkms -psysdig-dkms -- debian/tmp/usr/src/sysdig-$(sver)/dkms.conf
