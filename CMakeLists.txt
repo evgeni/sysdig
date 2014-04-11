@@ -1,4 +1,21 @@
-cmake_minimum_required(VERSION 2.8)
+# Prior to doing anything, we make sure that we aren't trying to 
+# run cmake in-tree. (see Issue 71: https://github.com/draios/sysdig/issues/71)
+if(EXISTS CMakeLists.txt)
+	message( FATAL_ERROR 
+		"Looks like you are trying to run cmake from the base sysdig source directory.\n"
+		"** RUNNING CMAKE FROM THE BASE SYSDIG DIRECTORY WILL NOT WORK **\n"
+		"To Fix:\n"
+		" 1. Remove the CMakeCache.txt file in this directory. ex: rm CMakeCache.txt\n"
+		" 2. Create a build directory from here. ex: mkdir build\n"
+		" 3. cd into that directory. ex: cd build\n"
+		" 4. Run cmake from the build directory. ex: cmake ..\n"
+		" 5. Run make from the build directory. ex: make\n"
+		"Full paste-able example:\n"
+		"( rm -f CMakeCache.txt; mkdir build; cd build; cmake ..; make )\n"
+		"The following wiki page has more information on manually building sysdig: http://bit.ly/1oJ84UI")
+endif()
+
+cmake_minimum_required(VERSION 2.8.2)
 
 project(sysdig) 
 
@@ -14,7 +31,7 @@ if (LUAJIT_PREFIX AND USE_BUNDLED_LUAJIT)
                          "not both.")
 endif()
 
-set (LUAJIT_SRC ${PROJECT_SOURCE_DIR}/third-party/LuaJIT-2.0.2)
+set (LUAJIT_SRC "${PROJECT_SOURCE_DIR}/third-party/LuaJIT-2.0.2")
 
 option(USE_BUNDLED_JSONCPP "Enable building of the bundled jsoncpp" ON)
 option(JSONCPP_PREFIX "Build with jsoncpp at the given path" "")
@@ -24,11 +41,11 @@ if (JSONCPP_PREFIX AND USE_BUNDLED_JSONCPP)
 			     "not both.")
 endif()
 
-set (JSONCPP_SRC ${PROJECT_SOURCE_DIR}/userspace/libsinsp/third-party/jsoncpp)
+set (JSONCPP_SRC "${PROJECT_SOURCE_DIR}/userspace/libsinsp/third-party/jsoncpp")
 
 if (JSONCPP_PREFIX)
-	find_path (JSONCPP_INCLUDE json/json.h ${JSONCPP_PREFIX} NO_DEFAULT_PATH)
-	find_library (JSONCPP_LIB NAMES jsoncpp PATHS ${JSONCPP_PREFIX} NO_DEFAULT_PATH)
+	find_path (JSONCPP_INCLUDE json/json.h "${JSONCPP_PREFIX}" NO_DEFAULT_PATH)
+	find_library (JSONCPP_LIB NAMES jsoncpp PATHS "${JSONCPP_PREFIX}" NO_DEFAULT_PATH)
 	if (JSONCPP_INCLUDE AND JSONCPP_LIB)
 		message (STATUS "Found jsoncpp: include: ${JSONCPP_INCLUDE}, lib: ${JSONCPP_LIB}")
 	else()
@@ -43,8 +60,8 @@ elseif (NOT USE_BUNDLED_JSONCPP)
 		message (FATAL_ERROR "Couldn't find system jsoncpp")
 	endif()
 else()
-	set (JSONCPP_INCLUDE ${JSONCPP_SRC})
-	set (JSONCPP_LIB_SRC ${JSONCPP_SRC}/jsoncpp.cpp)
+	set (JSONCPP_INCLUDE "${JSONCPP_SRC}")
+	set (JSONCPP_LIB_SRC "${JSONCPP_SRC}/jsoncpp.cpp")
 	message (STATUS "Using bundled jsoncpp in '${JSONCPP_SRC}'")
 endif()
 
@@ -65,9 +82,15 @@ if(NOT WIN32)
 		add_subdirectory(driver)
 	endif()
 
+	if(CMAKE_SYSTEM_NAME MATCHES "SunOS")
+		set(CMD_MAKE gmake)
+	else()
+		set(CMD_MAKE make)
+	endif()
+
 	if (LUAJIT_PREFIX)
-		find_path (LUAJIT_INCLUDE luajit.h ${LUAJIT_PREFIX} NO_DEFAULT_PATH)
-		find_library (LUAJIT_LIB NAMES luajit luajit-5.1 PATHS ${LUAJIT_PREFIX} NO_DEFAULT_PATH)
+		find_path (LUAJIT_INCLUDE luajit.h "${LUAJIT_PREFIX}" NO_DEFAULT_PATH)
+		find_library (LUAJIT_LIB NAMES luajit luajit-5.1 PATHS "${LUAJIT_PREFIX}" NO_DEFAULT_PATH)
 		if (LUAJIT_INCLUDE AND LUAJIT_LIB)
 			message (STATUS "Found LuaJIT: include: ${LUAJIT_INCLUDE}, lib: ${LUAJIT_LIB}")
 		else()
@@ -82,14 +105,14 @@ if(NOT WIN32)
 			message (FATAL_ERROR "Couldn't find system LuaJIT")
 		endif()
 	else()
-		set (LUAJIT_INCLUDE ${LUAJIT_SRC}/src)
-		set (LUAJIT_LIB ${LUAJIT_SRC}/src/libluajit.a)
+		set (LUAJIT_INCLUDE "${LUAJIT_SRC}/src")
+		set (LUAJIT_LIB "${LUAJIT_SRC}/src/libluajit.a")
 		message (STATUS "Using bundled LuaJIT in '${LUAJIT_SRC}'")
 		include(ExternalProject)
 		ExternalProject_Add(luajit
-			SOURCE_DIR ${LUAJIT_SRC}
+			SOURCE_DIR "${LUAJIT_SRC}"
 			CONFIGURE_COMMAND ""
-			BUILD_COMMAND make
+			BUILD_COMMAND ${CMD_MAKE}
 			BUILD_IN_SOURCE 1
 			INSTALL_COMMAND "")
 	endif()
@@ -109,14 +132,14 @@ else()
 	set(CMAKE_C_FLAGS_RELEASE "${SYSDIG_FLAGS_WIN_RELEASE}")
 	set(CMAKE_CXX_FLAGS_RELEASE "${SYSDIG_FLAGS_WIN_RELEASE}")
 
-	set (LUAJIT_INCLUDE ${LUAJIT_SRC}/src)
-	set (LUAJIT_LIB ${LUAJIT_SRC}/src/lua51.lib)
+	set (LUAJIT_INCLUDE "${LUAJIT_SRC}/src")
+	set (LUAJIT_LIB "${LUAJIT_SRC}/src/lua51.lib")
 	include(ExternalProject)
 	ExternalProject_Add(luajit
 		SOURCE_DIR ${LUAJIT_SRC}
 		CONFIGURE_COMMAND ""
 		BUILD_COMMAND msvcbuild.bat
-		BINARY_DIR ${LUAJIT_INCLUDE}
+		BINARY_DIR "${LUAJIT_INCLUDE}"
 		INSTALL_COMMAND "")
 
 endif()

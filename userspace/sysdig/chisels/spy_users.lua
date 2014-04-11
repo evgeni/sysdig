@@ -25,7 +25,7 @@ args = {}
 
 -- Initialization callback
 function on_init()
-	-- Request the fileds that we need
+	-- Request the fields that we need
 	fetype = chisel.request_field("evt.type")
 	fexe = chisel.request_field("proc.exe")
 	fargs = chisel.request_field("proc.args")
@@ -33,7 +33,7 @@ function on_init()
 	fuser = chisel.request_field("user.name")
 
 	-- set the filter
-	chisel.set_filter("(evt.type=execve and not proc.name contains sh and proc.parentname contains sh) or (evt.type=chdir and evt.dir=< and proc.name contains sh)")
+	chisel.set_filter("(evt.type=execve and not proc.name contains sh and proc.pname contains sh) or (evt.type=chdir and evt.dir=< and proc.name contains sh)")
 	
 	return true
 end

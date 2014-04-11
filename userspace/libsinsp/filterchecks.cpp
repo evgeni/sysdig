@@ -36,9 +36,10 @@ const filtercheck_field_info sinsp_filter_check_fd_fields[] =
 {
 	{PT_INT64, EPF_NONE, PF_DEC, "fd.num", "the unique number identifying the file descriptor."},
 	{PT_CHARBUF, EPF_NONE, PF_DEC, "fd.type", "type of FD. Can be 'file', 'ipv4', 'ipv6', 'unix', 'pipe', 'event', 'signalfd', 'eventpoll', 'inotify' or 'signalfd'."},
-	{PT_CHARBUF, EPF_NONE, PF_DEC, "fd.typechar", "type of FD as a single character. Can be 'f' for file, 4 for IPv4 socket, 6 for IPv6 socket, 'u' for unix socket, p for pipe, 'e' for eventfd, 's' for signalfd, 'l' for eventpoll, 'i' for inotify, or 's' for signalfd, 'o' for uknown."},
+	{PT_CHARBUF, EPF_NONE, PF_DEC, "fd.typechar", "type of FD as a single character. Can be 'f' for file, 4 for IPv4 socket, 6 for IPv6 socket, 'u' for unix socket, p for pipe, 'e' for eventfd, 's' for signalfd, 'l' for eventpoll, 'i' for inotify, 'o' for uknown."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "fd.name", "FD full name. If the fd is a file, this field contains the full path. If the FD is a socket, this field contain the connection tuple."},
-	{PT_IPV4ADDR, EPF_FILTER_ONLY, PF_NA, "fd.ip", "matches the ip address (client or server) of the fd."},
+	{PT_CHARBUF, EPF_NONE, PF_NA, "fd.directory", "If the fd is a file, the directory that contains it."},
+	{PT_CHARBUF, EPF_NONE, PF_NA, "fd.ip", "matches the ip address (client or server) of the fd."},
 	{PT_IPV4ADDR, EPF_NONE, PF_NA, "fd.cip", "client IP address."},
 	{PT_IPV4ADDR, EPF_NONE, PF_NA, "fd.sip", "server IP address."},
 	{PT_PORT, EPF_FILTER_ONLY, PF_DEC, "fd.port", "matches the port (client or server) of the fd."},
@@ -101,6 +102,180 @@ uint8_t* sinsp_filter_check_fd::extract_fdtype(sinsp_fdinfo_t* fdinfo)
 	}
 }
 
+bool sinsp_filter_check_fd::extract_fdname_from_creator(sinsp_evt *evt, OUT uint32_t* len)
+{
+	const char* resolved_argstr;
+	uint16_t etype = evt->get_type();
+
+	if(PPME_IS_ENTER(etype))
+	{
+		return false;
+	}
+
+	switch(etype)
+	{
+	case PPME_SYSCALL_OPEN_X:
+	case PPME_SOCKET_ACCEPT_X:
+	case PPME_SOCKET_ACCEPT4_X:
+	case PPME_SYSCALL_CREAT_X:
+		{
+			const char* argstr = evt->get_param_as_str(1, &resolved_argstr, 
+				m_inspector->get_buffer_format());
+			
+			if(resolved_argstr[0] != 0)
+			{
+				m_tstr = resolved_argstr;
+			}
+			else
+			{
+				m_tstr = argstr;
+			}
+
+			return true;
+		}
+	case PPME_SYSCALL_OPENAT_X:
+		{
+			//
+			// XXX This is highly inefficient, as it re-requests the enter event and then
+			// does unnecessary allocations and copies. We assume that failed openat() happen
+			// rarely enough that we don't care.
+			//
+			sinsp_evt enter_evt;
+			if(!m_inspector->get_parser()->retrieve_enter_event(&enter_evt, evt))
+			{
+				return false;
+			}
+
+			sinsp_evt_param *parinfo;
+			char *name;
+			uint32_t namelen;
+			string sdir;
+
+			parinfo = enter_evt.get_param(1);
+			name = parinfo->m_val;
+			namelen = parinfo->m_len;
+
+			parinfo = enter_evt.get_param(0);
+			ASSERT(parinfo->m_len == sizeof(int64_t));
+			int64_t dirfd = *(int64_t *)parinfo->m_val;
+
+			sinsp_parser::parse_openat_dir(evt, name, dirfd, &sdir);
+
+			char fullpath[SCAP_MAX_PATH_SIZE];
+
+			sinsp_utils::concatenate_paths(fullpath, SCAP_MAX_PATH_SIZE, 
+				sdir.c_str(), 
+				sdir.length(), 
+				name, 
+				namelen);
+	
+			m_tstr = fullpath;
+			m_tstr.erase(remove_if(m_tstr.begin(), m_tstr.end(), g_invalidchar()), m_tstr.end());
+			return true;
+		}
+	default:
+		m_tstr = "";
+		return true;
+	}
+}
+
+uint8_t* sinsp_filter_check_fd::extract_from_null_fd(sinsp_evt *evt, OUT uint32_t* len)
+{
+	//
+	// Even is there's no fd, we still try to extract a name from exit events that create
+	// one. With these events, the fact that there's no FD means that the call failed,
+	// but even if that happened we still want to collect the name.
+	//
+	switch(m_field_id)
+	{
+	case TYPE_FDNAME:
+	{
+		if(extract_fdname_from_creator(evt, len) == true)
+		{
+			return (uint8_t*)m_tstr.c_str();
+		}
+		else
+		{
+			return NULL;
+		}
+	}
+	case TYPE_DIRECTORY:
+	{
+		if(extract_fdname_from_creator(evt, len) == true)
+		{
+			m_tstr.erase(remove_if(m_tstr.begin(), m_tstr.end(), g_invalidchar()), m_tstr.end());
+
+			uint32_t pos = m_tstr.rfind('/');
+			if(pos != string::npos)
+			{
+				if(pos < m_tstr.size() - 1)
+				{
+					m_tstr.resize(pos + 1);
+				}
+			}
+			else
+			{
+				m_tstr = "/";
+			}
+
+			return (uint8_t*)m_tstr.c_str();
+		}
+		else
+		{
+			return NULL;
+		}
+	}
+	case TYPE_FDTYPECHAR:
+		switch(PPME_MAKE_ENTER(evt->get_type()))
+		{
+		case PPME_SYSCALL_OPEN_E:
+		case PPME_SYSCALL_OPENAT_E:
+		case PPME_SYSCALL_CREAT_E:
+			m_tcstr[0] = CHAR_FD_FILE;
+			m_tcstr[1] = 0;
+			return m_tcstr;
+		case PPME_SOCKET_SOCKET_E:
+		case PPME_SOCKET_ACCEPT_E:
+		case PPME_SOCKET_ACCEPT4_E:
+			//
+			// Note, this is not accurate, because it always
+			// returns IPv4 even if this could be IPv6 or unix.
+			// For the moment, I assume it's better than nothing, and doing
+			// real event parsing here would be a pain. 
+			//
+			m_tcstr[0] = CHAR_FD_IPV4_SOCK;
+			m_tcstr[1] = 0;
+			return m_tcstr;
+		case PPME_SYSCALL_PIPE_E:
+			m_tcstr[0] = CHAR_FD_FIFO;
+			m_tcstr[1] = 0;
+			return m_tcstr;
+		case PPME_SYSCALL_EVENTFD_E:
+			m_tcstr[0] = CHAR_FD_EVENT;
+			m_tcstr[1] = 0;
+			return m_tcstr;
+		case PPME_SYSCALL_SIGNALFD_E:
+			m_tcstr[0] = CHAR_FD_SIGNAL;
+			m_tcstr[1] = 0;
+			return m_tcstr;
+		case PPME_SYSCALL_TIMERFD_CREATE_E:
+			m_tcstr[0] = CHAR_FD_TIMERFD;
+			m_tcstr[1] = 0;
+			return m_tcstr;
+		case PPME_SYSCALL_INOTIFY_INIT_E:
+			m_tcstr[0] = CHAR_FD_INOTIFY;
+			m_tcstr[1] = 0;
+			return m_tcstr;
+		default:
+			m_tcstr[0] = 'o';
+			m_tcstr[1] = 0;
+			return m_tcstr;
+		}
+	default:
+		return NULL;
+	}
+}
+
 uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len)
 {
 	ASSERT(evt);
@@ -120,88 +295,7 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len)
 
 	if(m_fdinfo == NULL)
 	{
-		//
-		// Even is there's no fd, we still try to extract a name from exit events that create
-		// one. With these events, the fact that there's no FD means that the call failed,
-		// but even if that happened we still want to collect the name.
-		//
-		if(m_field_id == TYPE_FDNAME)
-		{
-			const char* resolved_argstr;
-			uint16_t etype = evt->get_type();
-
-			if(PPME_IS_ENTER(etype))
-			{
-				return NULL;
-			}
-
-			switch(evt->get_type())
-			{
-			case PPME_SYSCALL_OPEN_X:
-			case PPME_SOCKET_ACCEPT_X:
-			case PPME_SOCKET_ACCEPT4_X:
-			case PPME_SYSCALL_CREAT_X:
-			case PPME_SYSCALL_OPENAT_X:
-				m_tstr = evt->get_param_as_str(1, &resolved_argstr, 
-					m_inspector->get_buffer_format());
-				return (uint8_t*)m_tstr.c_str();
-			default:
-				m_tstr = "";
-				return (uint8_t*)m_tstr.c_str();
-			}
-		}
-		if(m_field_id == TYPE_FDTYPECHAR)
-		{
-			switch(PPME_MAKE_ENTER(evt->get_type()))
-			{
-			case PPME_SYSCALL_OPEN_E:
-			case PPME_SYSCALL_OPENAT_E:
-			case PPME_SYSCALL_CREAT_E:
-				m_tcstr[0] = CHAR_FD_FILE;
-				m_tcstr[1] = 0;
-				return m_tcstr;
-			case PPME_SOCKET_SOCKET_E:
-			case PPME_SOCKET_ACCEPT_E:
-			case PPME_SOCKET_ACCEPT4_E:
-				//
-				// Note, this is not accurate, because it always
-				// returns IPv4 even if this could be IPv6 or unix.
-				// For the moment, I assume it's better than nothing, and doing
-				// real event parsing here would be a pain. 
-				//
-				m_tcstr[0] = CHAR_FD_IPV4_SOCK;
-				m_tcstr[1] = 0;
-				return m_tcstr;
-			case PPME_SYSCALL_PIPE_E:
-				m_tcstr[0] = CHAR_FD_FIFO;
-				m_tcstr[1] = 0;
-				return m_tcstr;
-			case PPME_SYSCALL_EVENTFD_E:
-				m_tcstr[0] = CHAR_FD_EVENT;
-				m_tcstr[1] = 0;
-				return m_tcstr;
-			case PPME_SYSCALL_SIGNALFD_E:
-				m_tcstr[0] = CHAR_FD_SIGNAL;
-				m_tcstr[1] = 0;
-				return m_tcstr;
-			case PPME_SYSCALL_TIMERFD_CREATE_E:
-				m_tcstr[0] = CHAR_FD_TIMERFD;
-				m_tcstr[1] = 0;
-				return m_tcstr;
-			case PPME_SYSCALL_INOTIFY_INIT_E:
-				m_tcstr[0] = CHAR_FD_INOTIFY;
-				m_tcstr[1] = 0;
-				return m_tcstr;
-			default:
-				m_tcstr[0] = 'o';
-				m_tcstr[1] = 0;
-				return m_tcstr;
-			}
-		}
-		else
-		{
-			return NULL;
-		}
+		return extract_from_null_fd(evt, len);
 	}
 
 	switch(m_field_id)
@@ -209,10 +303,29 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len)
 	case TYPE_FDNAME:
 		m_tstr = m_fdinfo->m_name;
 		m_tstr.erase(remove_if(m_tstr.begin(), m_tstr.end(), g_invalidchar()), m_tstr.end());
-
 		return (uint8_t*)m_tstr.c_str();
 	case TYPE_FDTYPE:
 		return extract_fdtype(m_fdinfo);
+	case TYPE_DIRECTORY:
+		{
+			m_tstr = m_fdinfo->m_name;
+			m_tstr.erase(remove_if(m_tstr.begin(), m_tstr.end(), g_invalidchar()), m_tstr.end());
+
+			uint32_t pos = m_tstr.rfind('/');
+			if(pos != string::npos)
+			{
+				if(pos < m_tstr.size() - 1)
+				{
+					m_tstr.resize(pos + 1);
+				}
+			}
+			else
+			{
+				m_tstr = "/";
+			}
+
+			return (uint8_t*)m_tstr.c_str();
+		}
 	case TYPE_FDTYPECHAR:
 		m_tcstr[0] = m_fdinfo->get_typechar();
 		m_tcstr[1] = 0;
@@ -539,11 +652,12 @@ const filtercheck_field_info sinsp_filter_check_thread_fields[] =
 {
 	{PT_INT64, EPF_NONE, PF_DEC, "proc.pid", "the id of the process generating the event."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.exe", "the full name (including the path) of the executable generating the event."},
-	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.name", "the name (excluding thr path) of the executable generating the event."},
+	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.name", "the name (excluding the path) of the executable generating the event."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.args", "the arguments passed on the command line when starting the process generating the event."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.cwd", "the current working directory of the event."},
 	{PT_UINT32, EPF_NONE, PF_DEC, "proc.nchilds", "the number of child threads of that the process generating the event currently has."},
-	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.parentname", "the name (excluding thr path) of the parent of the process generating the event."},
+	{PT_INT64, EPF_NONE, PF_DEC, "proc.ppid", "the pid of the parent of the process generating the event."},
+	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.pname", "the name (excluding the path) of the parent of the process generating the event."},
 	{PT_INT64, EPF_NONE, PF_DEC, "thread.tid", "the id of the thread generating the event."},
 	{PT_BOOL, EPF_NONE, PF_NA, "thread.ismain", "'true' if the thread generating the event is the main one in the process."},
 	{PT_RELTIME, EPF_NONE, PF_DEC, "thread.exectime", "Thread execution time. Exported only by switch events."},
@@ -669,6 +783,24 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len)
 
 			return (uint8_t*)&m_u64val;
 		}
+	case TYPE_PARENTPID:
+		if(tinfo->is_main_thread())
+		{
+			return (uint8_t*)&tinfo->m_ptid;
+		}
+		else
+		{
+			sinsp_threadinfo* mt = tinfo->get_main_thread();
+
+			if(mt != NULL)
+			{
+				return (uint8_t*)&mt->m_ptid;
+			}
+			else
+			{
+				return NULL;
+			}
+		}
 	case TYPE_PARENTNAME:
 		{
 			sinsp_threadinfo* ptinfo = 
@@ -769,7 +901,7 @@ const filtercheck_field_info sinsp_filter_check_event_fields[] =
 	{PT_CHARBUF, EPF_NONE, PF_NA, "evt.args", "all the event arguments, aggregated into a single string."},
 	{PT_CHARBUF, EPF_REQUIRES_ARGUMENT, PF_NA, "evt.arg", "one of the event arguments specified by name or by number. Some events (e.g. return codes or FDs) will be converted into a text representation when possible. E.g. 'resarg.fd' or 'resarg[0]'."},
 	{PT_DYN, EPF_REQUIRES_ARGUMENT, PF_NA, "evt.rawarg", "one of the event arguments specified by name. E.g. 'arg.fd'."},
-	{PT_CHARBUF, EPF_NONE, PF_NA, "evt.buffer", "the binary data buffer for events that have one, like read(), recvfrom(), etc. Use this field in filters with 'contains' to search into I/O data buffers."},
+	{PT_BYTEBUF, EPF_NONE, PF_NA, "evt.buffer", "the binary data buffer for events that have one, like read(), recvfrom(), etc. Use this field in filters with 'contains' to search into I/O data buffers."},
 	{PT_CHARBUF, EPF_NONE, PF_DEC, "evt.res", "event return value, as an error code string (e.g. 'ENOENT')."},
 	{PT_INT64, EPF_NONE, PF_DEC, "evt.rawres", "event return value, as a number (e.g. -2). Useful for range comparisons."},
 	{PT_BOOL, EPF_NONE, PF_NA, "evt.failed", "'true' for events that returned an error status."},
@@ -783,6 +915,7 @@ const filtercheck_field_info sinsp_filter_check_event_fields[] =
 sinsp_filter_check_event::sinsp_filter_check_event()
 {
 	m_first_ts = 0;
+	m_is_compare = false;
 	m_info.m_name = "evt";
 	m_info.m_fields = sinsp_filter_check_event_fields;
 	m_info.m_nfiedls = sizeof(sinsp_filter_check_event_fields) / sizeof(sinsp_filter_check_event_fields[0]);
@@ -876,7 +1009,7 @@ int32_t sinsp_filter_check_event::parse_field_name(const char* str)
 	}
 }
 
-void sinsp_filter_check_event::parse_filter_value(const char* str)
+void sinsp_filter_check_event::parse_filter_value(const char* str, uint32_t len)
 {
 	string val(str);
 
@@ -886,11 +1019,11 @@ void sinsp_filter_check_event::parse_filter_value(const char* str)
 		// 'rawarg' is handled in a custom way
 		//
 		ASSERT(m_arginfo != NULL);
-		return sinsp_filter_check::string_to_rawval(str, m_arginfo->type);
+		return sinsp_filter_check::string_to_rawval(str, len, m_arginfo->type);
 	}
 	else
 	{
-		return sinsp_filter_check::parse_filter_value(str);
+		return sinsp_filter_check::parse_filter_value(str, len);
 	}
 }
 
@@ -972,6 +1105,21 @@ void sinsp_filter_check_event::ts_to_string(uint64_t ts, OUT string* res, bool d
 	}
 
 	*res = buf;
+}
+
+uint8_t* extract_argraw(sinsp_evt *evt, OUT uint32_t* len, const char *argname)
+{
+	const sinsp_evt_param* pi = evt->get_param_value_raw(argname);
+
+	if(pi != NULL)
+	{
+		*len = pi->m_len;
+		return (uint8_t*)pi->m_val;
+	}
+	else
+	{
+		return NULL;
+	}
 }
 
 uint8_t* sinsp_filter_check_event::extract(sinsp_evt *evt, OUT uint32_t* len)
@@ -1113,19 +1261,7 @@ uint8_t* sinsp_filter_check_event::extract(sinsp_evt *evt, OUT uint32_t* len)
 	case TYPE_CPU:
 		return (uint8_t*)&evt->m_cpuid;
 	case TYPE_ARGRAW:
-		{
-			const sinsp_evt_param* pi = evt->get_param_value_raw(m_arginfo->name);
-
-			if(pi != NULL)
-			{
-				*len = pi->m_len;
-				return (uint8_t*)pi->m_val;
-			}
-			else
-			{
-				return NULL;
-			}
-		}
+		return extract_argraw(evt, len, m_arginfo->name);
 		break;
 	case TYPE_ARGSTR:
 		{
@@ -1200,6 +1336,11 @@ uint8_t* sinsp_filter_check_event::extract(sinsp_evt *evt, OUT uint32_t* len)
 		break;
 	case TYPE_BUFFER:
 		{
+			if(m_is_compare)
+			{
+				return extract_argraw(evt, len, "data");
+			}
+
 			const char* resolved_argstr;
 			const char* argstr;
 			argstr = evt->get_param_value_str("data", &resolved_argstr, m_inspector->get_buffer_format());
@@ -1391,6 +1532,9 @@ char* sinsp_filter_check_event::tostring(sinsp_evt* evt)
 
 bool sinsp_filter_check_event::compare(sinsp_evt *evt)
 {
+	bool res;
+
+	m_is_compare = true;
 	if(m_field_id == TYPE_ARGRAW)
 	{
 		uint32_t len;
@@ -1403,15 +1547,18 @@ bool sinsp_filter_check_event::compare(sinsp_evt *evt)
 
 		ASSERT(m_arginfo != NULL);
 
-		return flt_compare(m_cmpop, 
+		res = flt_compare(m_cmpop,
 			m_arginfo->type, 
 			extracted_val, 
 			&m_val_storage[0]);
 	}
 	else
 	{
-		return sinsp_filter_check::compare(evt);
+		res = sinsp_filter_check::compare(evt);
 	}
+	m_is_compare = false;
+
+	return res;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1589,7 +1736,7 @@ int32_t rawstring_check::parse_field_name(const char* str)
 	return -1;
 }
 
-void rawstring_check::parse_filter_value(const char* str)
+void rawstring_check::parse_filter_value(const char* str, uint32_t len)
 {
 	ASSERT(false);
 }

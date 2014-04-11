@@ -16,8 +16,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 --]]
 
 -- Chisel description
-description = "shows the network payloads exchanged with an IP endpoint. You can combine this chisel with the -x, -X or -T sysdig command line switches to customize the screen output";
-short_description = "Show the data exchanged with the given IP address";
+description = "shows the network payloads exchanged using a given IP port number. You can combine this chisel with the -x, -X or -T sysdig command line switches to customize the screen output";
+short_description = "Show the data exchanged using the given IP port number";
 category = "Net";
 
 -- Chisel argument list
@@ -25,8 +25,8 @@ args =
 {
 	{
 		name = "host_ip", 
-		description = "the remote host IP address", 
-		argtype = "ipv4"
+		description = "the remote host IP port number", 
+		argtype = "int"
 	},
 }
 
@@ -35,14 +35,14 @@ terminal = require "ansiterminal"
 
 -- Argument notification callback
 function on_set_arg(name, val)
-	addr = val
+	port = val
 
 	return true
 end
 
 -- Initialization callback
 function on_init()
-	-- Request the fields that we need
+	-- Request the fileds that we need
 	fdata = chisel.request_field("evt.arg.data")
 	fisread = chisel.request_field("evt.is_io_read")
 	fres = chisel.request_field("evt.rawarg.res")
@@ -51,8 +51,7 @@ function on_init()
 	sysdig.set_snaplen(1000)
 
 	-- set the filter
-	chisel.set_filter("evt.is_io=true and fd.type=ipv4 and fd.ip=" .. addr)
-	
+        chisel.set_filter("evt.is_io=true and fd.type=ipv4 and fd.port=" .. port )
 	return true
 end
 
