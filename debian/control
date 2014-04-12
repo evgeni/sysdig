@@ -5,8 +5,8 @@ Maintainer: Evgeni Golov <evgeni@debian.org>
 Build-Depends: dpkg (>= 1.17.0), debhelper (>= 9), dkms, cmake, libluajit-5.1-dev, libjsoncpp-dev
 Standards-Version: 3.9.5
 Homepage: http://www.sysdig.org/
-#Vcs-Git: git://git.debian.org/collab-maint/sysdig.git
-#Vcs-Browser: http://git.debian.org/?p=collab-maint/sysdig.git;a=summary
+Vcs-Git: git://anonscm.debian.org/collab-maint/sysdig.git
+Vcs-Browser: http://anonscm.debian.org/gitweb/?p=collab-maint/sysdig.git;a=summary
 
 Package: sysdig
 Architecture: any
