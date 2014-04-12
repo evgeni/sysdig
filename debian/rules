@@ -12,6 +12,7 @@ export DH_OPTIONS
 export DEB_CFLAGS_MAINT_APPEND   = $(shell dpkg-buildflags --get CPPFLAGS)
 export DEB_CXXFLAGS_MAINT_APPEND = $(shell dpkg-buildflags --get CPPFLAGS)
 
+# this needs dpkg >= 1.17.0
 sver:=$(shell dpkg-parsechangelog -SVersion |sed -r 's/-[^-]+$$//')
 
 
