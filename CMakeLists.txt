@@ -1,7 +1,7 @@
 # Prior to doing anything, we make sure that we aren't trying to 
 # run cmake in-tree. (see Issue 71: https://github.com/draios/sysdig/issues/71)
 if(EXISTS CMakeLists.txt)
-	message( FATAL_ERROR 
+	message(FATAL_ERROR 
 		"Looks like you are trying to run cmake from the base sysdig source directory.\n"
 		"** RUNNING CMAKE FROM THE BASE SYSDIG DIRECTORY WILL NOT WORK **\n"
 		"To Fix:\n"
@@ -23,47 +23,7 @@ if(NOT DEFINED SYSDIG_VERSION)
 	set(SYSDIG_VERSION "0.1.1-dev")
 endif()
 
-option(USE_BUNDLED_LUAJIT "Enable building of the bundled LuaJIT" ON)
-option(LUAJIT_PREFIX "Build with LuaJIT at the given path" "")
-
-if (LUAJIT_PREFIX AND USE_BUNDLED_LUAJIT)
-    message (FATAL_ERROR "You must set either LUAJIT_PREFIX or USE_BUNDLED_LUAJIT "
-                         "not both.")
-endif()
-
-set (LUAJIT_SRC "${PROJECT_SOURCE_DIR}/third-party/LuaJIT-2.0.2")
-
-option(USE_BUNDLED_JSONCPP "Enable building of the bundled jsoncpp" ON)
-option(JSONCPP_PREFIX "Build with jsoncpp at the given path" "")
-
-if (JSONCPP_PREFIX AND USE_BUNDLED_JSONCPP)
-	message (FATAL_ERROR "You must set either JSONCPP_PREFIX or USE_BUNDLED_JSONCPP "
-			     "not both.")
-endif()
-
-set (JSONCPP_SRC "${PROJECT_SOURCE_DIR}/userspace/libsinsp/third-party/jsoncpp")
-
-if (JSONCPP_PREFIX)
-	find_path (JSONCPP_INCLUDE json/json.h "${JSONCPP_PREFIX}" NO_DEFAULT_PATH)
-	find_library (JSONCPP_LIB NAMES jsoncpp PATHS "${JSONCPP_PREFIX}" NO_DEFAULT_PATH)
-	if (JSONCPP_INCLUDE AND JSONCPP_LIB)
-		message (STATUS "Found jsoncpp: include: ${JSONCPP_INCLUDE}, lib: ${JSONCPP_LIB}")
-	else()
-		message (FATAL_ERROR "Couldn't find jsoncpp in '${JSONCPP_PREFIX}'")
-	endif()
-elseif (NOT USE_BUNDLED_JSONCPP)
-	find_path (JSONCPP_INCLUDE json/json.h PATH_SUFFIXES jsoncpp)
-	find_library (JSONCPP_LIB NAMES jsoncpp)
-	if (JSONCPP_INCLUDE AND JSONCPP_LIB)
-		message (STATUS "Found jsoncpp: include: ${JSONCPP_INCLUDE}, lib: ${JSONCPP_LIB}")
-	else()
-		message (FATAL_ERROR "Couldn't find system jsoncpp")
-	endif()
-else()
-	set (JSONCPP_INCLUDE "${JSONCPP_SRC}")
-	set (JSONCPP_LIB_SRC "${JSONCPP_SRC}/jsoncpp.cpp")
-	message (STATUS "Using bundled jsoncpp in '${JSONCPP_SRC}'")
-endif()
+add_definitions(-DPLATFORM_NAME="${CMAKE_SYSTEM_NAME}")
 
 if(NOT WIN32)
 
@@ -80,41 +40,14 @@ if(NOT WIN32)
 
 	if(CMAKE_SYSTEM_NAME MATCHES "Linux")
 		add_subdirectory(driver)
+		add_subdirectory(scripts)
+		add_definitions(-DHAS_CAPTURE)
 	endif()
 
 	if(CMAKE_SYSTEM_NAME MATCHES "SunOS")
 		set(CMD_MAKE gmake)
 	else()
 		set(CMD_MAKE make)
-	endif()
-
-	if (LUAJIT_PREFIX)
-		find_path (LUAJIT_INCLUDE luajit.h "${LUAJIT_PREFIX}" NO_DEFAULT_PATH)
-		find_library (LUAJIT_LIB NAMES luajit luajit-5.1 PATHS "${LUAJIT_PREFIX}" NO_DEFAULT_PATH)
-		if (LUAJIT_INCLUDE AND LUAJIT_LIB)
-			message (STATUS "Found LuaJIT: include: ${LUAJIT_INCLUDE}, lib: ${LUAJIT_LIB}")
-		else()
-			message (FATAL_ERROR "Couldn't find LuaJIT in '${LUAJIT_PREFIX}'")
-		endif()
-	elseif (NOT USE_BUNDLED_LUAJIT)
-		find_path (LUAJIT_INCLUDE luajit.h PATH_SUFFIXES luajit-2.0 luajit)
-		find_library (LUAJIT_LIB NAMES luajit luajit-5.1)
-		if (LUAJIT_INCLUDE AND LUAJIT_LIB)
-			message (STATUS "Found LuaJIT: include: ${LUAJIT_INCLUDE}, lib: ${LUAJIT_LIB}")
-		else()
-			message (FATAL_ERROR "Couldn't find system LuaJIT")
-		endif()
-	else()
-		set (LUAJIT_INCLUDE "${LUAJIT_SRC}/src")
-		set (LUAJIT_LIB "${LUAJIT_SRC}/src/libluajit.a")
-		message (STATUS "Using bundled LuaJIT in '${LUAJIT_SRC}'")
-		include(ExternalProject)
-		ExternalProject_Add(luajit
-			SOURCE_DIR "${LUAJIT_SRC}"
-			CONFIGURE_COMMAND ""
-			BUILD_COMMAND ${CMD_MAKE}
-			BUILD_IN_SOURCE 1
-			INSTALL_COMMAND "")
 	endif()
 
 else()
@@ -132,28 +65,155 @@ else()
 	set(CMAKE_C_FLAGS_RELEASE "${SYSDIG_FLAGS_WIN_RELEASE}")
 	set(CMAKE_CXX_FLAGS_RELEASE "${SYSDIG_FLAGS_WIN_RELEASE}")
 
-	set (LUAJIT_INCLUDE "${LUAJIT_SRC}/src")
-	set (LUAJIT_LIB "${LUAJIT_SRC}/src/lua51.lib")
-	include(ExternalProject)
-	ExternalProject_Add(luajit
-		SOURCE_DIR ${LUAJIT_SRC}
-		CONFIGURE_COMMAND ""
-		BUILD_COMMAND msvcbuild.bat
-		BINARY_DIR "${LUAJIT_INCLUDE}"
-		INSTALL_COMMAND "")
-
 endif()
 
 if(APPLE)
 	set(CMAKE_EXE_LINKER_FLAGS "-pagezero_size 10000 -image_base 100000000")
 endif()
 
+include(ExternalProject)
+
+#
+# LuaJIT
+#
+option(USE_BUNDLED_LUAJIT "Enable building of the bundled LuaJIT" ON)
+option(LUAJIT_PREFIX "Build with LuaJIT at the given path" "")
+
+if(LUAJIT_PREFIX AND USE_BUNDLED_LUAJIT)
+    message(FATAL_ERROR "You must set either LUAJIT_PREFIX or USE_BUNDLED_LUAJIT "
+                         "not both.")
+endif()
+
+if(LUAJIT_PREFIX)
+	find_path(LUAJIT_INCLUDE luajit.h "${LUAJIT_PREFIX}/*" NO_DEFAULT_PATH)
+	find_library(LUAJIT_LIB NAMES luajit luajit-5.1 PATHS "${LUAJIT_PREFIX}/*" NO_DEFAULT_PATH)
+	if(LUAJIT_INCLUDE AND LUAJIT_LIB)
+		message(STATUS "Found LuaJIT: include: ${LUAJIT_INCLUDE}, lib: ${LUAJIT_LIB}")
+	else()
+		message(FATAL_ERROR "Couldn't find LuaJIT in '${LUAJIT_PREFIX}'")
+	endif()
+elseif(NOT USE_BUNDLED_LUAJIT)
+	find_path(LUAJIT_INCLUDE luajit.h PATH_SUFFIXES luajit-2.0 luajit)
+	find_library(LUAJIT_LIB NAMES luajit luajit-5.1)
+	if(LUAJIT_INCLUDE AND LUAJIT_LIB)
+		message(STATUS "Found LuaJIT: include: ${LUAJIT_INCLUDE}, lib: ${LUAJIT_LIB}")
+	else()
+		message(FATAL_ERROR "Couldn't find system LuaJIT")
+	endif()
+else()
+	set(LUAJIT_SRC "${PROJECT_BINARY_DIR}/luajit-prefix/src/luajit/src")
+	message(STATUS "Using bundled LuaJIT in '${LUAJIT_SRC}'")
+	set(LUAJIT_INCLUDE "${LUAJIT_SRC}")
+	if(NOT WIN32)
+		set(LUAJIT_LIB "${LUAJIT_SRC}/libluajit.a")
+		ExternalProject_Add(luajit
+			URL "http://download.draios.com/dependencies/LuaJIT-2.0.3.tar.gz"
+			URL_MD5 "f14e9104be513913810cd59c8c658dc0"
+			CONFIGURE_COMMAND ""
+			BUILD_COMMAND ${CMD_MAKE}
+			BUILD_IN_SOURCE 1
+			INSTALL_COMMAND "")
+	else()
+		set(LUAJIT_LIB "${LUAJIT_SRC}/lua51.lib")
+		ExternalProject_Add(luajit
+			URL "http://download.draios.com/dependencies/LuaJIT-2.0.3.tar.gz"
+			URL_MD5 "f14e9104be513913810cd59c8c658dc0"
+			CONFIGURE_COMMAND ""
+			BUILD_COMMAND msvcbuild.bat
+			BINARY_DIR "${LUAJIT_SRC}"
+			INSTALL_COMMAND "")
+	endif()
+endif()
+
+#
+# JsonCpp
+#
+option(USE_BUNDLED_JSONCPP "Enable building of the bundled jsoncpp" ON)
+option(JSONCPP_PREFIX "Build with jsoncpp at the given path" "")
+
+if(JSONCPP_PREFIX AND USE_BUNDLED_JSONCPP)
+	message(FATAL_ERROR "You must set either JSONCPP_PREFIX or USE_BUNDLED_JSONCPP "
+			     "not both.")
+endif()
+
+set(JSONCPP_SRC "${PROJECT_SOURCE_DIR}/userspace/libsinsp/third-party/jsoncpp")
+
+if(JSONCPP_PREFIX)
+	find_path(JSONCPP_INCLUDE json/json.h "${JSONCPP_PREFIX}/*" NO_DEFAULT_PATH)
+	find_library(JSONCPP_LIB NAMES jsoncpp PATHS "${JSONCPP_PREFIX}/*" NO_DEFAULT_PATH)
+	if(JSONCPP_INCLUDE AND JSONCPP_LIB)
+		message(STATUS "Found jsoncpp: include: ${JSONCPP_INCLUDE}, lib: ${JSONCPP_LIB}")
+	else()
+		message(FATAL_ERROR "Couldn't find jsoncpp in '${JSONCPP_PREFIX}'")
+	endif()
+elseif(NOT USE_BUNDLED_JSONCPP)
+	find_path(JSONCPP_INCLUDE json/json.h PATH_SUFFIXES jsoncpp)
+	find_library(JSONCPP_LIB NAMES jsoncpp)
+	if(JSONCPP_INCLUDE AND JSONCPP_LIB)
+		message(STATUS "Found jsoncpp: include: ${JSONCPP_INCLUDE}, lib: ${JSONCPP_LIB}")
+	else()
+		message(FATAL_ERROR "Couldn't find system jsoncpp")
+	endif()
+else()
+	set(JSONCPP_INCLUDE "${JSONCPP_SRC}")
+	set(JSONCPP_LIB_SRC "${JSONCPP_SRC}/jsoncpp.cpp")
+	message(STATUS "Using bundled jsoncpp in '${JSONCPP_SRC}'")
+endif()
+
+#
+# zlib
+#
+option(USE_BUNDLED_ZLIB "Enable building of the bundled zlib" ON)
+option(ZLIB_PREFIX "Build with zlib at the given path" "")
+
+if(ZLIB_PREFIX AND USE_BUNDLED_ZLIB)
+    message(FATAL_ERROR "You must set either ZLIB_PREFIX or USE_BUNDLED_ZLIB "
+                         "not both.")
+endif()
+
+if(ZLIB_PREFIX)
+	find_path(ZLIB_INCLUDE zlib.h "${ZLIB_PREFIX}/*" NO_DEFAULT_PATH)
+	find_library(ZLIB_LIB NAMES z PATHS "${ZLIB_PREFIX}/*" NO_DEFAULT_PATH)
+	if(ZLIB_INCLUDE AND ZLIB_LIB)
+		message(STATUS "Found zlib: include: ${ZLIB_INCLUDE}, lib: ${ZLIB_LIB}")
+	else()
+		message(FATAL_ERROR "Couldn't find zlib in '${ZLIB_PREFIX}'")
+	endif()
+elseif(NOT USE_BUNDLED_ZLIB)
+	find_path(ZLIB_INCLUDE zlib.h PATH_SUFFIXES zlib)
+	find_library(ZLIB_LIB NAMES z)
+	if(ZLIB_INCLUDE AND ZLIB_LIB)
+		message(STATUS "Found zlib: include: ${ZLIB_INCLUDE}, lib: ${ZLIB_LIB}")
+	else()
+		message(FATAL_ERROR "Couldn't find system zlib")
+	endif()
+else()
+	set(ZLIB_SRC "${PROJECT_BINARY_DIR}/zlib-prefix/src/zlib")
+	message(STATUS "Using bundled zlib in '${ZLIB_SRC}'")
+	set(ZLIB_INCLUDE "${ZLIB_SRC}")
+	if(NOT WIN32)
+		set(ZLIB_LIB "${ZLIB_SRC}/libz.a")
+		ExternalProject_Add(zlib
+			URL "http://download.draios.com/dependencies/zlib-1.2.8.tar.gz"
+			URL_MD5 "44d667c142d7cda120332623eab69f40"
+			CONFIGURE_COMMAND "./configure"
+			BUILD_COMMAND ${CMD_MAKE}
+			BUILD_IN_SOURCE 1
+			INSTALL_COMMAND "")
+	else()
+		set(ZLIB_LIB "${ZLIB_SRC}/zdll.lib")
+		ExternalProject_Add(zlib
+			URL "http://download.draios.com/dependencies/zlib-1.2.8.tar.gz"
+			URL_MD5 "44d667c142d7cda120332623eab69f40"
+			CONFIGURE_COMMAND ""
+			BUILD_COMMAND nmake -f win32/Makefile.msc
+			BUILD_IN_SOURCE 1
+			INSTALL_COMMAND "")
+	endif()
+endif()
+
 add_subdirectory(userspace/sysdig)
 add_subdirectory(userspace/libscap)
-if(CMAKE_SYSTEM_NAME MATCHES "Linux")
-   add_subdirectory(userspace/libscap/examples/01-open)
-   add_subdirectory(userspace/libscap/examples/02-validatebuffer)
-endif()
 add_subdirectory(userspace/libsinsp)
 
 set(CPACK_PACKAGE_NAME "sysdig")
@@ -170,7 +230,7 @@ set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Draios Inc. <support@draios.com>")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "http://www.draios.com")
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "dkms (>= 2.1.0.0)")
-set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${PROJECT_SOURCE_DIR}/scripts/debian/postinst;${PROJECT_SOURCE_DIR}/scripts/debian/prerm")
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_BINARY_DIR}/scripts/debian/postinst;${CMAKE_BINARY_DIR}/scripts/debian/prerm")
 
 set(CPACK_RPM_PACKAGE_LICENSE "GPLv2")
 set(CPACK_RPM_PACKAGE_URL "http://www.draios.com")

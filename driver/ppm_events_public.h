@@ -19,7 +19,7 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef EVENTS_PUBLIC_H_
 #define EVENTS_PUBLIC_H_
 
-#if defined (__sun)
+#if defined(__sun)
 #include <sys/ioccom.h>
 #endif
 
@@ -718,7 +718,12 @@ enum ppm_syscall_code {
 	PPM_SC_WAITPID = 293,
 	PPM_SC_PREAD64 = 294,
 	PPM_SC_PWRITE64 = 295,
-	PPM_SC_MAX = 296,
+	PPM_SC_ARCH_PRCTL = 296,
+	PPM_SC_SHMAT = 297,
+	PPM_SC_SIGRETURN = 298,
+	PPM_SC_FALLOCATE = 299,
+	PPM_SC_NEWFSSTAT = 300,
+	PPM_SC_MAX = 301,
 };
 
 /*

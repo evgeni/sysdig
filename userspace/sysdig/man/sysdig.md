@@ -92,7 +92,7 @@ OPTIONS
   lists the available chisels. Looks for chisels in ., ./chisels, ~/.chisels and /usr/share/sysdig/chisels.
   
 **-d**, **--displayflt**  
-  Make the given filter a display one Setting this option causes the events to be filtered after being parsed by the state system. Events are normally filtered before being analyzed, which is more efficient, but can cause state (e.g. FD names) to be lost
+  Make the given filter a display one. Setting this option causes the events to be filtered after being parsed by the state system. Events are normally filtered before being analyzed, which is more efficient, but can cause state (e.g. FD names) to be lost.
   
 **-D**, **--debug**
   Capture events about sysdig itself
@@ -106,14 +106,17 @@ OPTIONS
 **-i _chiselname_**, **--chisel-info _chiselname_**  
   Get a longer description and the arguments associated with a chisel found in the -cl option list.
 
-**-l**, **--list**  
-  List the fields that can be used for filtering and output formatting. Use -lv to get additional information for each field.
-  
 **-L**, **--list-events**  
   List the events that the engine supports
   
+**-l**, **--list**  
+  List the fields that can be used for filtering and output formatting. Use -lv to get additional information for each field.
+    
 **-n** _num_, **--numevents**=_num_  
   Stop capturing after <num> events
+
+** -P **, **--progress**  
+  Print progress on stderr while processing trace files.
   
 **-p** _output_format_, **--print**=_output_format_  
   Specify the format to be used when printing the events. See the examples section below for more info.
@@ -144,6 +147,9 @@ OPTIONS
   
 **-X**, **--print-hex-ascii**  
   Print data buffers in hex and ASCII.
+
+**-z**, **--compress**
+  Used with **-w**, enables compression for tracefiles.
   
 EXAMPLES
 --------

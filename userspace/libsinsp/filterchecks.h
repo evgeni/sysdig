@@ -131,7 +131,7 @@ public:
 	~sinsp_filter_check_list();
 	void add_filter_check(sinsp_filter_check* filter_check);
 	void get_all_fields(vector<const filter_check_info*>* list);
-	sinsp_filter_check* new_filter_check_from_fldname(string name, sinsp* inspector, bool do_exact_check);
+	sinsp_filter_check* new_filter_check_from_fldname(const string& name, sinsp* inspector, bool do_exact_check);
 
 private:
 	vector<sinsp_filter_check*> m_check_list;
@@ -201,15 +201,16 @@ public:
 		TYPE_FDTYPECHAR = 2,
 		TYPE_FDNAME = 3,
 		TYPE_DIRECTORY = 4,
-		TYPE_IP = 5,
-		TYPE_CLIENTIP = 6,
-		TYPE_SERVERIP = 7,
-		TYPE_PORT = 8,
-		TYPE_CLIENTPORT = 9,
-		TYPE_SERVERPORT = 10,
-		TYPE_L4PROTO = 11,
-		TYPE_SOCKFAMILY = 12,
-		TYPE_IS_SERVER = 13,
+		TYPE_FILENAME = 5,
+		TYPE_IP = 6,
+		TYPE_CLIENTIP = 7,
+		TYPE_SERVERIP = 8,
+		TYPE_PORT = 9,
+		TYPE_CLIENTPORT = 10,
+		TYPE_SERVERPORT = 11,
+		TYPE_L4PROTO = 12,
+		TYPE_SOCKFAMILY = 13,
+		TYPE_IS_SERVER = 14,
 	};
 
 	enum fd_type
@@ -263,24 +264,26 @@ public:
 		TYPE_EXE = 1,
 		TYPE_NAME = 2,
 		TYPE_ARGS = 3,
-		TYPE_CWD = 4,
-		TYPE_NCHILDS = 5,
-		TYPE_PARENTPID = 6,
-		TYPE_PARENTNAME = 7,
-		TYPE_TID = 8,
-		TYPE_ISMAINTHREAD = 9,
-		TYPE_EXECTIME = 10,
-		IOBYTES = 11,
-		TOTIOBYTES = 12,
-		LATENCY = 13,
-		TOTLATENCY = 14,
+		TYPE_CMDLINE = 4,
+		TYPE_CWD = 5,
+		TYPE_NCHILDS = 6,
+		TYPE_PARENTPID = 7,
+		TYPE_PARENTNAME = 8,
+		TYPE_TID = 9,
+		TYPE_ISMAINTHREAD = 10,
+		TYPE_EXECTIME = 11,
+		TYPE_TOTEXECTIME = 12,
+		TYPE_IOBYTES = 13,
+		TYPE_TOTIOBYTES = 14,
+		TYPE_LATENCY = 15,
+		TYPE_TOTLATENCY = 16,
 	};
 
 	sinsp_filter_check_thread();
 	sinsp_filter_check* allocate_new();
 	int32_t parse_field_name(const char* str);
 	uint8_t* extract(sinsp_evt *evt, OUT uint32_t* len);
-
+	
 	// XXX this is overkill and wasted for most of the fields.
 	// It could be optimized by dynamically allocating the right amount
 	// of memory, but we don't care for the moment since we expect filters 
@@ -289,6 +292,9 @@ public:
 	string m_tstr;
 	uint64_t m_u64val;
 	vector<uint64_t> m_last_proc_switch_times;
+
+private:
+	uint64_t extract_exectime(sinsp_evt *evt); 
 };
 
 //
@@ -325,8 +331,9 @@ public:
 		TYPE_ISIO = 23,
 		TYPE_ISIO_READ = 24,
 		TYPE_ISIO_WRITE = 25,
-		TYPE_ISWAIT = 26,
-		TYPE_COUNT = 27,
+		TYPE_IODIR = 26,
+		TYPE_ISWAIT = 27,
+		TYPE_COUNT = 28,
 	};
 
 	sinsp_filter_check_event();

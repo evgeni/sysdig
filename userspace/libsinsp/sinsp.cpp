@@ -76,6 +76,7 @@ sinsp::sinsp() :
 	m_snaplen = DEFAULT_SNAPLEN;
 	m_buffer_format = sinsp_evt::PF_NORMAL;
 	m_isdebug_enabled = false;
+	m_filesize = -1;
 }
 
 sinsp::~sinsp()
@@ -131,14 +132,26 @@ void sinsp::open(string filename)
 
 	g_logger.log("starting offline capture");
 
-	m_h = scap_open_offline((char *)filename.c_str(), error);
+	m_h = scap_open_offline(filename.c_str(), error);
 
 	if(m_h == NULL)
 	{
 		throw sinsp_exception(error);
 	}
 
-	m_filename = filename;
+	//
+	// gianluca: This might need to be replaced with
+	// a portable stat(), since I'm afraid that on S3
+	// (that we'll use in the backend) the seek will
+	// read the entire file anyway
+	//
+	FILE* fp = fopen(filename.c_str(), "rb");
+	if(fp)
+	{
+		fseek(fp, 0L, SEEK_END);
+		m_filesize = ftell(fp);
+		fclose(fp);
+	}
 
 	init();
 }
@@ -167,18 +180,27 @@ void sinsp::close()
 	if(m_filter != NULL)
 	{
 		delete m_filter;
+		m_filter = NULL;
 	}
 #endif
 }
 
-void sinsp::autodump_start(const string dump_filename)
+void sinsp::autodump_start(const string& dump_filename, bool compress)
 {
 	if(NULL == m_h)
 	{
 		throw sinsp_exception("inspector not opened yet");
 	}
 
-	m_dumper = scap_dump_open(m_h, dump_filename.c_str());
+	if(compress)
+	{
+		m_dumper = scap_dump_open(m_h, dump_filename.c_str(), SCAP_COMPRESSION_GZIP);
+	}
+	else
+	{
+		m_dumper = scap_dump_open(m_h, dump_filename.c_str(), SCAP_COMPRESSION_NONE);
+	}
+
 	if(NULL == m_dumper)
 	{
 		throw sinsp_exception(scap_getlasterr(m_h));
@@ -642,7 +664,7 @@ void sinsp::start_dropping_mode(uint32_t sampling_ratio)
 }
 
 #ifdef HAS_FILTERING
-void sinsp::set_filter(string filter)
+void sinsp::set_filter(const string& filter)
 {
 	if(m_filter != NULL)
 	{
@@ -748,9 +770,11 @@ sinsp_evttables* sinsp::get_event_info_tables()
 	return &g_infotables;
 }
 
-void sinsp::add_chisel_dir(string dirname)
+void sinsp::add_chisel_dir(string dirname, bool front_add)
 {
 #ifdef HAS_CHISELS
+	trim(dirname);
+
 	if(dirname[dirname.size() -1] != '/')
 	{
 		dirname += "/";
@@ -761,7 +785,14 @@ void sinsp::add_chisel_dir(string dirname)
 	strcpy(ncdi.m_dir, dirname.c_str());
 	ncdi.m_need_to_resolve = false;
 
-	g_chisel_dirs->push_back(ncdi);
+	if(front_add)
+	{
+		g_chisel_dirs->insert(g_chisel_dirs->begin(), ncdi);
+	}
+	else
+	{
+		g_chisel_dirs->push_back(ncdi);
+	}
 #endif
 }
 
@@ -793,4 +824,23 @@ bool sinsp::is_debug_enabled()
 sinsp_parser* sinsp::get_parser()
 {
 	return m_parser;
+}
+
+double sinsp::get_read_progress()
+{
+	if(m_filesize == -1)
+	{
+		throw sinsp_exception(scap_getlasterr(m_h));
+	}
+
+	ASSERT(m_filesize != 0);
+
+	int64_t fpos = scap_get_readfile_offset(m_h);
+
+	if(fpos == -1)
+	{
+		throw sinsp_exception(scap_getlasterr(m_h));		
+	}
+
+	return (double)fpos * 100 / m_filesize;
 }

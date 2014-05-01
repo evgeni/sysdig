@@ -38,7 +38,7 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #include <getopt.h>
 #endif
 
-bool ctrl_c_pressed = false;
+static bool g_terminate = false;
 #ifdef HAS_CHISELS
 vector<sinsp_chisel*> g_chisels;
 #endif
@@ -50,7 +50,7 @@ static void usage();
 //
 static void signal_callback(int signal)
 {
-	ctrl_c_pressed = true;
+	g_terminate = true;
 }
 
 void replace_in_place(string& str, string substr_to_replace, string new_substr)
@@ -90,11 +90,11 @@ static void usage()
 #endif
 "                    lists the available chisels. Looks for chisels in .,\n"
 "                    ./chisels, ~/.chisels and /usr/share/sysdig/chisels.\n"
-" -d, --displayflt   Make the given filter a display one\n"
+" -d, --displayflt   Make the given filter a display one.\n"
 "                    Setting this option causes the events to be filtered\n"
 "                    after being parsed by the state system. Events are\n"
 "                    normally filtered before being analyzed, which is more\n"
-"                    efficient, but can cause state (e.g. FD names) to be lost\n"
+"                    efficient, but can cause state (e.g. FD names) to be lost.\n"
 " -D, --debug        Capture events about sysdig itself\n"
 " -h, --help         Print this page\n"
 #ifdef HAS_CHISELS
@@ -103,12 +103,13 @@ static void usage()
 "                    a chisel found in the -cl option list.\n"
 #endif
 " -j, --json         Emit output as json\n"
+" -L, --list-events  List the events that the engine supports\n"
 " -l, --list         List the fields that can be used for filtering and output\n"
 "                    formatting. Use -lv to get additional information for each\n"
 "                    field.\n"
-" -L, --list-events  List the events that the engine supports\n"
 " -n <num>, --numevents=<num>\n"
 "                    Stop capturing after <num> events\n"
+" -P, --progress     Print progress on stderr while processing trace files\n"
 " -p <output_format>, --print=<output_format>\n"
 "                    Specify the format to be used when printing the events.\n"
 "                    See the examples section below for more info.\n"
@@ -133,6 +134,7 @@ static void usage()
 " -x, --print-hex    Print data buffers in hex.\n"
 " -X, --print-hex-ascii\n"
 "                    Print data buffers in hex and ASCII.\n"
+" -z, --compress     Used with -w, enables compression for tracefiles.\n"
 "\n"
 "Output format:\n\n"
 "By default, sysdig prints the information for each captured event on a single\n"
@@ -159,7 +161,7 @@ static void usage()
 " Print all the open system calls invoked by cat\n"
 "   $ sysdig proc.name=cat and evt.type=open\n\n"
 " Print the name of the files opened by cat\n"
-"   $ ./sysdig -p\"%%evt.arg.name\" proc.name=cat and evt.type=open\n\n"
+"   $ sysdig -p\"%%evt.arg.name\" proc.name=cat and evt.type=open\n\n"
     );
 }
 
@@ -210,6 +212,31 @@ void print_summary_table(sinsp* inspector,
 		}
 	}
 }
+
+#ifdef HAS_CHISELS
+static void add_chisel_dirs(sinsp* inspector)
+{
+	//
+	// Add the default chisel directory statically configured by the build system
+	//
+	inspector->add_chisel_dir(SYSDIG_INSTALLATION_DIR CHISELS_INSTALLATION_DIR, false);
+
+	//
+	// Add the directories configured in the SYSDIG_CHISEL_DIR environment variable
+	//
+	char* s_user_cdirs = getenv("SYSDIG_CHISEL_DIR");
+
+	if(s_user_cdirs != NULL)
+	{
+		vector<string> user_cdirs = sinsp_split(s_user_cdirs, ';');
+
+		for(uint32_t j = 0; j < user_cdirs.size(); j++)
+		{
+			inspector->add_chisel_dir(user_cdirs[j], true);
+		}
+	}
+}
+#endif
 
 static void initialize_chisels()
 {
@@ -264,7 +291,6 @@ static void chisels_do_timeout(sinsp_evt* ev)
 #endif
 }
 
-
 //
 // Event processing loop
 //
@@ -272,6 +298,7 @@ captureinfo do_inspect(sinsp* inspector,
 					   uint64_t cnt,
 					   bool quiet,
 					   bool absolute_times,
+					   bool print_progress,
 					   sinsp_filter* display_filter,
 					   vector<summary_table_entry>* summary_table,
 					   sinsp_evt_formatter* formatter)
@@ -283,13 +310,14 @@ captureinfo do_inspect(sinsp* inspector,
 	uint64_t deltats = 0;
 	uint64_t firstts = 0;
 	string line;
+	double last_printed_progress_pct = 0;
 
 	//
 	// Loop through the events
 	//
 	while(1)
 	{
-		if(retval.m_nevts == cnt || ctrl_c_pressed)
+		if(retval.m_nevts == cnt || g_terminate)
 		{
 			//
 			// End of capture, either because the user stopped it, or because
@@ -318,9 +346,19 @@ captureinfo do_inspect(sinsp* inspector,
 		{
 			//
 			// Reached the end of a trace file.
+			// If we are reporting prgress, this is 100%
+			//
+			if(print_progress)
+			{
+				fprintf(stderr, "100.00\n");
+				fflush(stderr);
+			}
+
+			//
 			// Notify the chisels that we're exiting.
 			//
 			chisels_on_capture_end();
+
 			break;
 		}
 		else if(res != SCAP_SUCCESS)
@@ -342,6 +380,21 @@ captureinfo do_inspect(sinsp* inspector,
 			firstts = ts;
 		}
 		deltats = ts - firstts;
+
+		if(print_progress)
+		{
+			if(ev->get_num() % 10000 == 0)
+			{
+				double progress_pct = inspector->get_read_progress();
+
+				if(progress_pct - last_printed_progress_pct > 0.1)
+				{
+					fprintf(stderr, "%.2lf\n", progress_pct);
+					fflush(stderr);
+					last_printed_progress_pct = progress_pct;
+				}
+			}
+		}
 
 		//
 		// If there are chisels to run, run them
@@ -394,19 +447,19 @@ captureinfo do_inspect(sinsp* inspector,
 				continue;
 			}
 
-			//
-			// Output the line
-			//
-			if(display_filter)
-			{
-				if(!display_filter->run(ev))
-				{
-					continue;
-				}
-			}
-
 			if(formatter->tostring(ev, &line))
 			{
+				//
+				// Output the line
+				//
+				if(display_filter)
+				{
+					if(!display_filter->run(ev))
+					{
+						continue;
+					}
+				}
+
 				cout << line << endl;
 			}
 		}
@@ -423,7 +476,7 @@ int main(int argc, char **argv)
 {
 	int res = EXIT_SUCCESS;
 	sinsp* inspector = NULL;
-	string infile;
+	vector<string> infiles;
 	string outfile;
 	int op;
 	uint64_t cnt = -1;
@@ -432,6 +485,8 @@ int main(int argc, char **argv)
 	bool is_filter_display = false;
 	bool verbose = false;
 	bool list_flds = false;
+	bool print_progress = false;
+	bool compress = false;
 	sinsp_evt::param_fmt event_buffer_format = sinsp_evt::PF_NORMAL;
 	sinsp_filter* display_filter = NULL;
 	double duration = 1;
@@ -453,6 +508,7 @@ int main(int argc, char **argv)
 		{"chisel", required_argument, 0, 'c' },
 		{"list-chisels", no_argument, &cflag, 1 },
 #endif
+		{"compress", no_argument, 0, 'z' },
 		{"displayflt", no_argument, 0, 'd' },
 		{"debug", no_argument, 0, 'D'},
 		{"help", no_argument, 0, 'h' },
@@ -463,6 +519,7 @@ int main(int argc, char **argv)
 		{"list", no_argument, 0, 'l' },
 		{"list-events", no_argument, 0, 'L' },
 		{"numevents", required_argument, 0, 'n' },
+		{"progress", required_argument, 0, 'P' },
 		{"print", required_argument, 0, 'p' },
 		{"quiet", no_argument, 0, 'q' },
 		{"readfile", required_argument, 0, 'r' },
@@ -484,13 +541,13 @@ int main(int argc, char **argv)
 		inspector = new sinsp();
 
 #ifdef HAS_CHISELS
-		inspector->add_chisel_dir(SYSDIG_INSTALLATION_DIR CHISELS_INSTALLATION_DIR);
+		add_chisel_dirs(inspector);
 #endif
 
 		//
 		// Parse the args
 		//
-		while((op = getopt_long(argc, argv, "Aac:dDhi:jlLn:p:qr:Ss:t:vw:xX", long_options, &long_index)) != -1)
+		while((op = getopt_long(argc, argv, "Aac:dDhi:jlLn:Pp:qr:Ss:t:vw:xXz", long_options, &long_index)) != -1)
 		{
 			switch(op)
 			{
@@ -626,6 +683,9 @@ int main(int argc, char **argv)
 					goto exit;
 				}
 				break;
+			case 'P':
+				print_progress = true;
+				break;
 			case 'p':
 				if(string(optarg) == "p")
 				{
@@ -647,7 +707,7 @@ int main(int argc, char **argv)
 				quiet = true;
 				break;
 			case 'r':
-				infile = optarg;
+				infiles.push_back(optarg);
 				break;
 			case 'S':
 				summary_table = new vector<summary_table_entry>;
@@ -715,6 +775,9 @@ int main(int argc, char **argv)
 
 				event_buffer_format = sinsp_evt::PF_HEXASCII;
 				break;
+			case 'z':
+				compress = true;
+				break;
 			default:
 				break;
 			}
@@ -744,14 +807,14 @@ int main(int argc, char **argv)
 			goto exit;
 		}
 
+		string filter;
+
 		//
 		// the filter is at the end of the command line
 		//
 		if(optind + n_filterargs < argc)
 		{
-	#ifdef HAS_FILTERING
-			string filter;
-
+#ifdef HAS_FILTERING
 			for(int32_t j = optind + n_filterargs; j < argc; j++)
 			{
 				filter += argv[j];
@@ -761,36 +824,27 @@ int main(int argc, char **argv)
 				}
 			}
 
-			try
+			if(is_filter_display)
 			{
-				if(is_filter_display)
-				{
-					display_filter = new sinsp_filter(inspector, filter);
-				}
-				else
-				{
-					inspector->set_filter(filter);
-				}
+				display_filter = new sinsp_filter(inspector, filter);
 			}
-			catch(sinsp_exception e)
-			{
-				cerr << e.what() << endl;
-				res = EXIT_FAILURE;
-				goto exit;
-			}
-	#else
+#else
 			fprintf(stderr, "filtering not compiled.\n");
 			res = EXIT_FAILURE;
 			goto exit;
-	#endif
+#endif
 		}
 
-		//
-		// Set the CRTL+C signal
-		//
 		if(signal(SIGINT, signal_callback) == SIG_ERR)
 		{
-			fprintf(stderr, "An error occurred while setting a signal handler.\n");
+			fprintf(stderr, "An error occurred while setting SIGINT signal handler.\n");
+			res = EXIT_FAILURE;
+			goto exit;
+		}
+
+		if(signal(SIGTERM, signal_callback) == SIG_ERR)
+		{
+			fprintf(stderr, "An error occurred while setting SIGTERM signal handler.\n");
 			res = EXIT_FAILURE;
 			goto exit;
 		}
@@ -805,119 +859,150 @@ int main(int argc, char **argv)
 		//
 		sinsp_evt_formatter formatter(inspector, output_format);
 
-		initialize_chisels();
-
-		//
-		// Launch the capture
-		//
-		bool open_success = true;
-
-		if(infile != "")
+		for(uint32_t j = 0; j < infiles.size() || infiles.size() == 0; j++)
 		{
-			//
-			// We have a file to open
-			//
-			inspector->open(infile);
-		}
-		else
-		{
-			//
-			// No file to open, this is a live capture
-			//
-#if !defined(_WIN32) && !defined(__APPLE__)
-			try
+#ifdef HAS_FILTERING
+			if(filter.size() && !is_filter_display)
 			{
-				inspector->open("");
+				inspector->set_filter(filter);
 			}
-			catch(sinsp_exception e)
-			{
-				open_success = false;
-			}
-#else
-			//
-			// Starting live capture
-			// If this fails on Windows and OSX, don't try with any driver
-			//
-			inspector->open("");
 #endif
 
 			//
-			// Starting the live capture failed, try to load the driver with
-			// modprobe.
+			// Launch the capture
 			//
-			if(!open_success)
+			bool open_success = true;
+
+			if(infiles.size() != 0)
 			{
-				open_success = true;
+				initialize_chisels();
+
+				//
+				// We have a file to open
+				//
+				inspector->open(infiles[j]);
+			}
+			else
+			{
+				if(j > 0)
+				{
+					break;
+				}
+
+				initialize_chisels();
+
+				//
+				// No file to open, this is a live capture
+				//
+#if defined(HAS_CAPTURE)
+				if(print_progress)
+				{
+					fprintf(stderr, "the -P flag cannot be used with live captures.\n");
+					res = EXIT_FAILURE;
+					goto exit;
+				}
 
 				try
 				{
-					system("modprobe sysdig-probe > /dev/null 2> /dev/null");
-
 					inspector->open("");
 				}
 				catch(sinsp_exception e)
 				{
 					open_success = false;
 				}
-			}
-
-			//
-			// No luck with modprobe either.
-			// Maybe this is a version of sysdig that was compiled from the
-			// sources, so let's make one last attempt with insmod and the
-			// path to the driver directory.
-			//
-			if(!open_success)
-			{
-				system("insmod ../../driver/sysdig-probe.ko > /dev/null 2> /dev/null");
-
+#else
+				//
+				// Starting live capture
+				// If this fails on Windows and OSX, don't try with any driver
+				//
 				inspector->open("");
+#endif
+
+				//
+				// Starting the live capture failed, try to load the driver with
+				// modprobe.
+				//
+				if(!open_success)
+				{
+					open_success = true;
+
+					try
+					{
+						system("modprobe sysdig-probe > /dev/null 2> /dev/null");
+
+						inspector->open("");
+					}
+					catch(sinsp_exception e)
+					{
+						open_success = false;
+					}
+				}
+
+				//
+				// No luck with modprobe either.
+				// Maybe this is a version of sysdig that was compiled from the
+				// sources, so let's make one last attempt with insmod and the
+				// path to the driver directory.
+				//
+				if(!open_success)
+				{
+					system("insmod ../../driver/sysdig-probe.ko > /dev/null 2> /dev/null");
+
+					inspector->open("");
+				}
 			}
-		}
 
-		if(snaplen != 0)
-		{
-			inspector->set_snaplen(snaplen);
-		}
+			if(snaplen != 0)
+			{
+				inspector->set_snaplen(snaplen);
+			}
 
-		if(outfile != "")
-		{
-			inspector->autodump_start(outfile);
-		}
+			duration = ((double)clock()) / CLOCKS_PER_SEC;
 
-		duration = ((double)clock()) / CLOCKS_PER_SEC;
+			if(outfile != "")
+			{
+				inspector->autodump_start(outfile, compress);
+			}
 
-		//
-		// Notify the chisels that the capture is starting
-		//
-		chisels_on_capture_start();
+			//
+			// Notify the chisels that the capture is starting
+			//
+			chisels_on_capture_start();
 
-		cinfo = do_inspect(inspector,
-			cnt,
-			quiet,
-			absolute_times,
-			display_filter,
-			summary_table,
-			&formatter);
+			cinfo = do_inspect(inspector,
+				cnt,
+				quiet,
+				absolute_times,
+				print_progress,
+				display_filter,
+				summary_table,
+				&formatter);
 
-		duration = ((double)clock()) / CLOCKS_PER_SEC - duration;
+			duration = ((double)clock()) / CLOCKS_PER_SEC - duration;
 
-		scap_stats cstats;
-		inspector->get_capture_stats(&cstats);
+			scap_stats cstats;
+			inspector->get_capture_stats(&cstats);
 
-		if(verbose)
-		{
-			fprintf(stderr, "Driver Events:%" PRIu64 "\nDriver Drops:%" PRIu64 "\n",
-				cstats.n_evts,
-				cstats.n_drops);
+			if(verbose)
+			{
+				fprintf(stderr, "Driver Events:%" PRIu64 "\nDriver Drops:%" PRIu64 "\n",
+					cstats.n_evts,
+					cstats.n_drops);
 
-			fprintf(stderr, "Elapsed time: %.3lf, Captured Events: %" PRIu64 ", %.2lf eps\n",
-				duration,
-				cinfo.m_nevts,
-				(double)cinfo.m_nevts / duration);
+				fprintf(stderr, "Elapsed time: %.3lf, Captured Events: %" PRIu64 ", %.2lf eps\n",
+					duration,
+					cinfo.m_nevts,
+					(double)cinfo.m_nevts / duration);
+			}
+
+			//
+			// Done. Close the capture.
+			//
+			inspector->close();
+
 		}
 	}
-	catch(sinsp_exception e)
+	catch(sinsp_exception& e)
 	{
 		cerr << e.what() << endl;
 		res = EXIT_FAILURE;

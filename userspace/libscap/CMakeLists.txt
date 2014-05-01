@@ -1,4 +1,5 @@
 include_directories("${PROJECT_SOURCE_DIR}/common")
+include_directories("${ZLIB_INCLUDE}")
 
 add_library(scap STATIC 
 	scap.c 
@@ -12,6 +13,8 @@ add_library(scap STATIC
 	event_table.c
 	syscall_info_table.c)
 
+add_dependencies(scap zlib)
+
 if (CMAKE_SYSTEM_NAME MATCHES "SunOS")
 	target_link_libraries(scap
 		socket nsl)
@@ -19,4 +22,16 @@ if (CMAKE_SYSTEM_NAME MATCHES "SunOS")
 elseif (WIN32)
 	target_link_libraries(scap
 		Ws2_32.lib)
+endif()
+
+target_link_libraries(scap
+	"${ZLIB_LIB}")
+
+if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+    option(BUILD_LIBSCAP_EXAMPLES "Build libscap examples" ON)
+
+    if (BUILD_LIBSCAP_EXAMPLES)
+        add_subdirectory(examples/01-open)
+        add_subdirectory(examples/02-validatebuffer)
+    endif()
 endif()

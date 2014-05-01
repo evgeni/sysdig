@@ -91,6 +91,8 @@ class sinsp_parser;
 class sinsp_analyzer;
 class sinsp_filter;
 
+vector<string> sinsp_split(const string &s, char delim);
+
 /*!
   \brief Information about a group of filter/formatting fields.
 */
@@ -248,7 +250,7 @@ public:
 	  @throws a sinsp_exception containing the error string is thrown in case
 	   the filter is invalid.
 	*/
-	void set_filter(string filter);
+	void set_filter(const string& filter);
 #endif
 
 	/*!
@@ -264,6 +266,8 @@ public:
 
 	  \param dump_filename the destination trace file.
 
+	  \param compress true to save the tracefile in a compressed format.
+
 	  \note only the events that pass the capture filter set with \ref set_filter()
 	   will be saved to disk.
 	  \note this simplified dump interface allows only one dump per capture.
@@ -274,7 +278,7 @@ public:
 	  @throws a sinsp_exception containing the error string is thrown in case
 	   of failure.
 	*/
-	void autodump_start(const string dump_filename);
+	void autodump_start(const string& dump_filename, bool compress);
 
 	/*!
 	  \brief Stops an event dump that was started with \ref autodump_start().
@@ -399,9 +403,12 @@ public:
 	/*!
 	  \brief Add a new directory containing chisels.
 
+	  \parame front_add if true, the chisel directory is added at the front of 
+	   the search list and therefore gets priority.  
+
 	  \note This function is not reentrant.
 	*/
-	void add_chisel_dir(string dirname);
+	void add_chisel_dir(string dirname, bool front_add);
 
 	/*!
 	  \brief Get the list of machine network interfaces.
@@ -440,6 +447,11 @@ public:
 	*/
 	bool is_debug_enabled();
 
+	/*!
+	  \brief XXX.
+	*/
+	double get_read_progress();
+
 	//
 	// Misc internal stuff
 	//
@@ -471,9 +483,9 @@ private:
 	void remove_thread(int64_t tid);
 
 	scap_t* m_h;
+	int64_t m_filesize;
 	bool m_islive;
 	bool m_isdebug_enabled;
-	string m_filename;
 	sinsp_evt m_evt;
 	string m_lasterr;
 	int64_t m_tid_to_remove;

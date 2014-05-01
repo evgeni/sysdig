@@ -39,6 +39,7 @@ const filtercheck_field_info sinsp_filter_check_fd_fields[] =
 	{PT_CHARBUF, EPF_NONE, PF_DEC, "fd.typechar", "type of FD as a single character. Can be 'f' for file, 4 for IPv4 socket, 6 for IPv6 socket, 'u' for unix socket, p for pipe, 'e' for eventfd, 's' for signalfd, 'l' for eventpoll, 'i' for inotify, 'o' for uknown."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "fd.name", "FD full name. If the fd is a file, this field contains the full path. If the FD is a socket, this field contain the connection tuple."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "fd.directory", "If the fd is a file, the directory that contains it."},
+	{PT_CHARBUF, EPF_NONE, PF_NA, "fd.filename", "If the fd is a file, the filename without the path."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "fd.ip", "matches the ip address (client or server) of the fd."},
 	{PT_IPV4ADDR, EPF_NONE, PF_NA, "fd.cip", "client IP address."},
 	{PT_IPV4ADDR, EPF_NONE, PF_NA, "fd.sip", "server IP address."},
@@ -133,6 +134,22 @@ bool sinsp_filter_check_fd::extract_fdname_from_creator(sinsp_evt *evt, OUT uint
 
 			return true;
 		}
+	case PPME_SOCKET_CONNECT_X:
+		{
+			const char* argstr = evt->get_param_as_str(1, &resolved_argstr, 
+				m_inspector->get_buffer_format());
+			
+			if(resolved_argstr[0] != 0)
+			{
+				m_tstr = resolved_argstr;
+			}
+			else
+			{
+				m_tstr = argstr;
+			}
+
+			return true;
+		}
 	case PPME_SYSCALL_OPENAT_X:
 		{
 			//
@@ -205,7 +222,7 @@ uint8_t* sinsp_filter_check_fd::extract_from_null_fd(sinsp_evt *evt, OUT uint32_
 		{
 			m_tstr.erase(remove_if(m_tstr.begin(), m_tstr.end(), g_invalidchar()), m_tstr.end());
 
-			uint32_t pos = m_tstr.rfind('/');
+			size_t pos = m_tstr.rfind('/');
 			if(pos != string::npos)
 			{
 				if(pos < m_tstr.size() - 1)
@@ -216,6 +233,34 @@ uint8_t* sinsp_filter_check_fd::extract_from_null_fd(sinsp_evt *evt, OUT uint32_
 			else
 			{
 				m_tstr = "/";
+			}
+
+			return (uint8_t*)m_tstr.c_str();
+		}
+		else
+		{
+			return NULL;
+		}
+	}
+	case TYPE_FILENAME:
+	{
+		if(evt->get_type() != PPME_SYSCALL_OPEN_E && evt->get_type() != PPME_SYSCALL_OPENAT_E &&
+			evt->get_type() != PPME_SYSCALL_CREAT_E)
+		{
+			return NULL;
+		}
+ 
+		if(extract_fdname_from_creator(evt, len) == true)
+		{
+			m_tstr.erase(remove_if(m_tstr.begin(), m_tstr.end(), g_invalidchar()), m_tstr.end());
+
+			size_t pos = m_tstr.rfind('/');
+			if(pos != string::npos)
+			{
+				if(pos < m_tstr.size() - 1)
+				{
+					m_tstr = m_tstr.substr(pos + 1, string::npos);
+				}
 			}
 
 			return (uint8_t*)m_tstr.c_str();
@@ -293,25 +338,49 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len)
 		return (uint8_t*)&m_tinfo->m_lastevent_fd;
 	}
 
-	if(m_fdinfo == NULL)
-	{
-		return extract_from_null_fd(evt, len);
-	}
-
 	switch(m_field_id)
 	{
 	case TYPE_FDNAME:
+		if(m_fdinfo == NULL)
+		{
+			return extract_from_null_fd(evt, len);
+		}
+
+		if(evt->get_type() == PPME_SOCKET_CONNECT_X)
+		{
+			sinsp_evt_param *parinfo;
+
+			parinfo = evt->get_param(0);
+			ASSERT(parinfo->m_len == sizeof(uint64_t));
+			int64_t retval = *(int64_t*)parinfo->m_val;
+
+			if(retval < 0)
+			{
+				return extract_from_null_fd(evt, len);
+			}
+		}
+
 		m_tstr = m_fdinfo->m_name;
 		m_tstr.erase(remove_if(m_tstr.begin(), m_tstr.end(), g_invalidchar()), m_tstr.end());
 		return (uint8_t*)m_tstr.c_str();
 	case TYPE_FDTYPE:
+		if(m_fdinfo == NULL)
+		{
+			return NULL;
+		}
+
 		return extract_fdtype(m_fdinfo);
 	case TYPE_DIRECTORY:
 		{
+			if(m_fdinfo == NULL)
+			{
+				return extract_from_null_fd(evt, len);
+			}
+
 			m_tstr = m_fdinfo->m_name;
 			m_tstr.erase(remove_if(m_tstr.begin(), m_tstr.end(), g_invalidchar()), m_tstr.end());
 
-			uint32_t pos = m_tstr.rfind('/');
+			size_t pos = m_tstr.rfind('/');
 			if(pos != string::npos)
 			{
 				if(pos < m_tstr.size() - 1)
@@ -326,12 +395,52 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len)
 
 			return (uint8_t*)m_tstr.c_str();
 		}
+	case TYPE_FILENAME:
+		{
+			if(m_fdinfo == NULL)
+			{
+				return extract_from_null_fd(evt, len);
+			}
+
+			if(m_fdinfo->m_type != SCAP_FD_FILE)
+			{
+				return NULL;
+			}
+
+			m_tstr = m_fdinfo->m_name;
+			m_tstr.erase(remove_if(m_tstr.begin(), m_tstr.end(), g_invalidchar()), m_tstr.end());
+
+			size_t pos = m_tstr.rfind('/');
+			if(pos != string::npos)
+			{
+				if(pos < m_tstr.size() - 1)
+				{
+					m_tstr = m_tstr.substr(pos + 1, string::npos);
+				}
+			}
+			else
+			{
+				m_tstr = "/";
+			}
+
+			return (uint8_t*)m_tstr.c_str();
+		}
 	case TYPE_FDTYPECHAR:
+		if(m_fdinfo == NULL)
+		{
+			return extract_from_null_fd(evt, len);
+		}
+
 		m_tcstr[0] = m_fdinfo->get_typechar();
 		m_tcstr[1] = 0;
 		return m_tcstr;
 	case TYPE_CLIENTIP:
 		{
+			if(m_fdinfo == NULL)
+			{
+				return NULL;
+			}
+
 			scap_fd_type evt_type = m_fdinfo->m_type;
 
 			if(m_fdinfo->is_role_none())
@@ -348,6 +457,11 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len)
 		break;
 	case TYPE_SERVERIP:
 		{
+			if(m_fdinfo == NULL)
+			{
+				return NULL;
+			}
+
 			scap_fd_type evt_type = m_fdinfo->m_type;
 
 			if(m_fdinfo->is_role_none())
@@ -368,6 +482,11 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len)
 		break;
 	case TYPE_CLIENTPORT:
 		{
+			if(m_fdinfo == NULL)
+			{
+				return NULL;
+			}
+
 			scap_fd_type evt_type = m_fdinfo->m_type;
 
 			if(m_fdinfo->is_role_none())
@@ -386,6 +505,11 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len)
 		}
 	case TYPE_SERVERPORT:
 		{
+			if(m_fdinfo == NULL)
+			{
+				return NULL;
+			}
+
 			scap_fd_type evt_type = m_fdinfo->m_type;
 
 			if(evt_type == SCAP_FD_IPV4_SOCK)
@@ -421,6 +545,11 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len)
 		}
 	case TYPE_L4PROTO:
 		{
+			if(m_fdinfo == NULL)
+			{
+				return NULL;
+			}
+
 			scap_l4_proto l4p = m_fdinfo->get_l4proto();
 
 			switch(l4p)
@@ -446,6 +575,11 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len)
 		}
 	case TYPE_IS_SERVER:
 		{
+			if(m_fdinfo == NULL)
+			{
+				return NULL;
+			}
+
 			m_tbool = 
 				m_inspector->get_ifaddr_list()->is_ipv4addr_in_local_machine(m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_dip);
 			return (uint8_t*)&m_tbool;
@@ -654,13 +788,15 @@ const filtercheck_field_info sinsp_filter_check_thread_fields[] =
 	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.exe", "the full name (including the path) of the executable generating the event."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.name", "the name (excluding the path) of the executable generating the event."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.args", "the arguments passed on the command line when starting the process generating the event."},
+	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.cmdline", "full process command line, i.e name + arguments."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.cwd", "the current working directory of the event."},
 	{PT_UINT32, EPF_NONE, PF_DEC, "proc.nchilds", "the number of child threads of that the process generating the event currently has."},
 	{PT_INT64, EPF_NONE, PF_DEC, "proc.ppid", "the pid of the parent of the process generating the event."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.pname", "the name (excluding the path) of the parent of the process generating the event."},
 	{PT_INT64, EPF_NONE, PF_DEC, "thread.tid", "the id of the thread generating the event."},
 	{PT_BOOL, EPF_NONE, PF_NA, "thread.ismain", "'true' if the thread generating the event is the main one in the process."},
-	{PT_RELTIME, EPF_NONE, PF_DEC, "thread.exectime", "Thread execution time. Exported only by switch events."},
+	{PT_RELTIME, EPF_NONE, PF_DEC, "thread.exectime", "CPU time spent by the last scheduled thread, in nanoseconds. Exported only by switch events."},
+	{PT_RELTIME, EPF_NONE, PF_DEC, "thread.totexectime", "Total CPU time, in nanoseconds since the beginning of the capture, for the current thread."},
 //	{PT_UINT64, EPF_NONE, PF_DEC, "iobytes", "I/O bytes (either read or write) generated by I/O calls like read, write, send receive..."},
 //	{PT_UINT64, EPF_NONE, PF_DEC, "totiobytes", "aggregated number of I/O bytes (either read or write) since the beginning of the capture."},
 //	{PT_RELTIME, EPF_NONE, PF_DEC, "latency", "number of nanoseconds spent in the last system call."},
@@ -692,10 +828,52 @@ int32_t sinsp_filter_check_thread::parse_field_name(const char* str)
 		//
 		throw sinsp_exception("filter error: proc.arg filter not implemented yet");
 	}
+	else if(string(val, 0, sizeof("thread.totexectime") - 1) == "thread.totexectime")
+	{
+		//
+		// Allocate thread storage for the value
+		//
+		m_th_state_id = m_inspector->reserve_thread_memory(sizeof(uint64_t));
+		return sinsp_filter_check::parse_field_name(str);
+	}
 	else
 	{
 		return sinsp_filter_check::parse_field_name(str);
 	}
+}
+
+uint64_t sinsp_filter_check_thread::extract_exectime(sinsp_evt *evt) 
+{
+	uint64_t res = 0;
+
+	if(m_last_proc_switch_times.size() == 0)
+	{
+		//
+		// Initialize the vector of CPU times
+		//
+		const scap_machine_info* minfo = m_inspector->get_machine_info();
+		ASSERT(minfo->num_cpus != 0);
+
+		for(uint32_t j = 0; j < minfo->num_cpus; j++)
+		{
+			m_last_proc_switch_times.push_back(0);
+		}
+	}
+
+	uint32_t cpuid = evt->get_cpuid();
+	uint64_t ts = evt->get_ts();
+	uint64_t lasttime = m_last_proc_switch_times[cpuid];
+
+	if(lasttime != 0)
+	{
+		res = ts - lasttime;
+	}
+
+	ASSERT(cpuid < m_last_proc_switch_times.size());
+
+	m_last_proc_switch_times[cpuid] = ts;
+
+	return res;
 }
 
 uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len)
@@ -704,7 +882,8 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len)
 
 	if(tinfo == NULL && 
 		m_field_id != TYPE_TID &&
-		m_field_id != TYPE_EXECTIME)
+		m_field_id != TYPE_EXECTIME &&
+		m_field_id != TYPE_TOTEXECTIME)
 	{
 		return NULL;
 	}
@@ -740,6 +919,24 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len)
 
 			return (uint8_t*)m_tstr.c_str();
 		}
+	case TYPE_CMDLINE:
+		{
+			m_tstr = tinfo->get_comm();
+
+			uint32_t j;
+			uint32_t nargs = tinfo->m_args.size();
+
+			for(j = 0; j < nargs; j++)
+			{
+				m_tstr += tinfo->m_args[j];
+				if(j < nargs -1)
+				{
+					m_tstr += ' ';
+				}
+			}
+
+			return (uint8_t*)m_tstr.c_str();
+		}
 	case TYPE_CWD:
 		m_tstr = tinfo->get_cwd();
 		return (uint8_t*)m_tstr.c_str();
@@ -753,35 +950,33 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len)
 
 			if(etype == PPME_SCHEDSWITCH_E || etype == PPME_SCHEDSWITCHEX_X)
 			{
-				if(m_last_proc_switch_times.size() == 0)
-				{
-					//
-					// Initialize the vector of CPU times
-					//
-					const scap_machine_info* minfo = m_inspector->get_machine_info();
-					ASSERT(minfo->num_cpus != 0);
-
-					for(uint32_t j = 0; j < minfo->num_cpus; j++)
-					{
-						m_last_proc_switch_times.push_back(0);
-					}
-				}
-
-				uint32_t cpuid = evt->get_cpuid();
-				uint64_t ts = evt->get_ts();
-				uint64_t lasttime = m_last_proc_switch_times[cpuid];
-
-				if(lasttime != 0)
-				{
-					m_u64val = ts - lasttime;
-				}
-
-				ASSERT(cpuid < m_last_proc_switch_times.size());
-
-				m_last_proc_switch_times[cpuid] = ts;
+				m_u64val = extract_exectime(evt);
 			}
 
 			return (uint8_t*)&m_u64val;
+		}
+	case TYPE_TOTEXECTIME:
+		{
+			m_u64val = 0;
+			uint16_t etype = evt->get_type();
+
+			if(etype == PPME_SCHEDSWITCH_E || etype == PPME_SCHEDSWITCHEX_X)
+			{
+				m_u64val = extract_exectime(evt);
+			}
+
+			sinsp_threadinfo* tinfo = evt->get_thread_info(false);
+
+			if(tinfo != NULL)
+			{
+				uint64_t* ptot = (uint64_t*)tinfo->get_private_state(m_th_state_id);
+				*ptot += m_u64val;
+				return (uint8_t*)ptot;
+			}
+			else
+			{
+				return NULL;
+			}
 		}
 	case TYPE_PARENTPID:
 		if(tinfo->is_main_thread())
@@ -816,8 +1011,8 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len)
 				return NULL;
 			}
 		}
-	case IOBYTES:
-	case TOTIOBYTES:
+	case TYPE_IOBYTES:
+	case TYPE_TOTIOBYTES:
 		{
 			//
 			// Extract the return value
@@ -840,7 +1035,7 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len)
 				res = 0;
 			}
 
-			if(m_field_id == IOBYTES)
+			if(m_field_id == TYPE_IOBYTES)
 			{
 				m_u64val = res;
 
@@ -859,7 +1054,7 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len)
 				return (uint8_t*)&m_u64val;
 			}
 		}
-	case LATENCY:
+	case TYPE_LATENCY:
 		if(tinfo->m_latency != 0)
 		{
 			return (uint8_t*)&tinfo->m_latency;
@@ -868,7 +1063,7 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len)
 		{
 			return NULL;
 		}
-	case TOTLATENCY:
+	case TYPE_TOTLATENCY:
 		m_u64val += tinfo->m_latency;
 		return (uint8_t*)&m_u64val;
 	default:
@@ -908,6 +1103,7 @@ const filtercheck_field_info sinsp_filter_check_event_fields[] =
 	{PT_BOOL, EPF_NONE, PF_NA, "evt.is_io", "'true' for events that read or write to FDs, like read(), send, recvfrom(), etc."},
 	{PT_BOOL, EPF_NONE, PF_NA, "evt.is_io_read", "'true' for events that read from FDs, like read(), recv(), recvfrom(), etc."},
 	{PT_BOOL, EPF_NONE, PF_NA, "evt.is_io_write", "'true' for events that write to FDs, like write(), send(), etc."},
+	{PT_CHARBUF, EPF_NONE, PF_NA, "evt.io_dir", "'r' for events that read from FDs, like read(); 'w' for events that write to FDs, like write()."},
 	{PT_BOOL, EPF_NONE, PF_NA, "evt.is_wait", "'true' for events that make the thread wait, e.g. sleep(), select(), poll()."},
 	{PT_UINT32, EPF_NONE, PF_DEC, "evt.count", "This filter field always returns 1 and can be used to count events from inside chisels."},
 };
@@ -1041,8 +1237,8 @@ const filtercheck_field_info* sinsp_filter_check_event::get_field_info()
 
 int32_t sinsp_filter_check_event::gmt2local(time_t t)
 {
-	register int dt, dir;
-	register struct tm *gmt, *loc;
+	int dt, dir;
+	struct tm *gmt, *loc;
 	struct tm sgmt;
 
 	if(t == 0)
@@ -1064,7 +1260,7 @@ int32_t sinsp_filter_check_event::gmt2local(time_t t)
 
 	dt += dir * 24 * 60 * 60;
 
-	return (dt);
+	return dt;
 }
 
 void sinsp_filter_check_event::ts_to_string(uint64_t ts, OUT string* res, bool date, bool ns)
@@ -1484,6 +1680,24 @@ uint8_t* sinsp_filter_check_event::extract(sinsp_evt *evt, OUT uint32_t* len)
 			}
 
 			return (uint8_t*)&m_u32val;
+		}
+	case TYPE_IODIR:
+		{
+			ppm_event_flags eflags = evt->get_flags();
+			if(eflags & EF_WRITES_TO_FD)
+			{
+				m_strstorage = "write";
+			}
+			else if(eflags & EF_READS_FROM_FD)
+			{
+				m_strstorage = "read";
+			}
+			else
+			{
+				return NULL;
+			}
+
+			return (uint8_t*)m_strstorage.c_str();
 		}
 	case TYPE_ISWAIT:
 		{
