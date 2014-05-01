@@ -1,3 +1,14 @@
+sysdig (0.1.81-1) unstable; urgency=medium
+
+  * New upstream release
+  * Add B-D on zlib1g-dev and use it for building
+  * drop LuaJIT from debian/copyright, upstream does not ship the
+    copy anymore
+  * Only require and execute dh_dkms when building arch-independent
+    stuff
+
+ -- Evgeni Golov <evgeni@debian.org>  Thu, 01 May 2014 14:53:09 +0200
+
 sysdig (0.1.79-1) unstable; urgency=low
 
   * Initial release (Closes: #743819)
