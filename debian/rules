@@ -17,10 +17,11 @@ sver:=$(shell dpkg-parsechangelog -SVersion |sed -r 's/-[^-]+$$//')
 
 
 %:
-	dh $@ --with dkms
+	dh $@
 
 override_dh_auto_configure:
 	dh_auto_configure -- -DUSE_BUNDLED_JSONCPP=OFF -DUSE_BUNDLED_LUAJIT=OFF -DUSE_BUNDLED_ZLIB=OFF -DBUILD_DRIVER=OFF -DSYSDIG_VERSION="$(sver)"
 
-override_dh_dkms:
-	dh_dkms -psysdig-dkms -- debian/tmp/usr/src/sysdig-$(sver)/dkms.conf
+override_dh_auto_install-indep:
+	dh_auto_install -i
+	dh_dkms -i -psysdig-dkms -- debian/tmp/usr/src/sysdig-$(sver)/dkms.conf
