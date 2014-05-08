@@ -946,9 +946,9 @@ static filename split_filename(string const &fname)
 	}
 	else
 	{
-		string name = fname.substr(0, idx);
-		string ext = fname.substr(idx+1);
-		res = { true, name, ext };
+		res.valid = true;
+		res.name = fname.substr(0, idx);
+		res.ext = fname.substr(idx+1);
 	}
 	return res;
 }
@@ -1299,13 +1299,22 @@ void sinsp_chisel::on_init()
 	//
 	lua_getglobal(m_ls, "on_init");
 
-	if(lua_pcall(m_ls, 0, 1, 0) != 0) 
+	if(!lua_isfunction(m_ls, -1)) 
 	{
 		//
 		// No on_init. 
 		// That's ok. Just return.
 		//
 		return;
+	}
+
+	if(lua_pcall(m_ls, 0, 1, 0) != 0) 
+	{
+		//
+		// Exception running init
+		//
+		const char* err = lua_tostring(m_ls, -1);
+		throw sinsp_exception(m_filename + " chisel error: " + err);
 	}
 
 	if(m_new_chisel_to_exec == "")
