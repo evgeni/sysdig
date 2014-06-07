@@ -1,0 +1,66 @@
+From 70c146b61237f62c0d7ffc690a2ee8a4b250296a Mon Sep 17 00:00:00 2001
+From: Evgeni Golov <evgeni@debian.org>
+Date: Sat, 7 Jun 2014 10:25:49 +0200
+Subject: [PATCH] use json.h from the include path instead of hardcoding
+ third-party
+
+this allows using the proper header files while linking to the system
+jsoncpp when using -DUSE_BUNDLED_JSONCPP=NO
+---
+ userspace/libsinsp/event.h          | 2 +-
+ userspace/libsinsp/eventformatter.h | 2 +-
+ userspace/libsinsp/filterchecks.h   | 2 +-
+ userspace/sysdig/CMakeLists.txt     | 1 +
+ 4 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/userspace/libsinsp/event.h b/userspace/libsinsp/event.h
+index fb38945..9e7f464 100644
+--- a/userspace/libsinsp/event.h
++++ b/userspace/libsinsp/event.h
+@@ -17,7 +17,7 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
+ #pragma once
+-#include "third-party/jsoncpp/json/json.h"
++#include <json/json.h>
+ 
+ #ifndef VISIBILITY_PRIVATE
+ #define VISIBILITY_PRIVATE private:
+diff --git a/userspace/libsinsp/eventformatter.h b/userspace/libsinsp/eventformatter.h
+index 6da57f8..cc243a6 100644
+--- a/userspace/libsinsp/eventformatter.h
++++ b/userspace/libsinsp/eventformatter.h
+@@ -17,7 +17,7 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
+ #pragma once
+-#include "third-party/jsoncpp/json/json.h"
++#include <json/json.h>
+ 
+ class sinsp_filter_check;
+ 
+diff --git a/userspace/libsinsp/filterchecks.h b/userspace/libsinsp/filterchecks.h
+index 71c5b56..a984826 100644
+--- a/userspace/libsinsp/filterchecks.h
++++ b/userspace/libsinsp/filterchecks.h
+@@ -17,7 +17,7 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
+ #pragma once
+-#include "third-party/jsoncpp/json/json.h"
++#include <json/json.h>
+ 
+ #ifdef HAS_FILTERING
+ 
+diff --git a/userspace/sysdig/CMakeLists.txt b/userspace/sysdig/CMakeLists.txt
+index c33e5e1..5207d65 100644
+--- a/userspace/sysdig/CMakeLists.txt
++++ b/userspace/sysdig/CMakeLists.txt
+@@ -1,3 +1,4 @@
++include_directories("${JSONCPP_INCLUDE}")
+ include_directories("${PROJECT_SOURCE_DIR}/common")
+ include_directories("${PROJECT_SOURCE_DIR}/userspace/libscap")
+ include_directories("${PROJECT_SOURCE_DIR}/userspace/libsinsp")
+-- 
+2.0.0
+
