@@ -129,7 +129,7 @@ static int32_t scap_write_proc_fds(scap_t *handle, struct scap_threadinfo *tinfo
 //
 // Write the fd list blocks
 //
-int32_t scap_write_fdlist(scap_t *handle, gzFile f)
+static int32_t scap_write_fdlist(scap_t *handle, gzFile f)
 {
 	struct scap_threadinfo *tinfo;
 	struct scap_threadinfo *ttinfo;
@@ -150,7 +150,7 @@ int32_t scap_write_fdlist(scap_t *handle, gzFile f)
 //
 // Write the process list block
 //
-int32_t scap_write_proclist(scap_t *handle, gzFile f)
+static int32_t scap_write_proclist(scap_t *handle, gzFile f)
 {
 	block_header bh;
 	uint32_t bt;
@@ -178,13 +178,18 @@ int32_t scap_write_proclist(scap_t *handle, gzFile f)
 		    sizeof(uint64_t) +	// fdlimit
 		    sizeof(uint32_t) +	// uid
 		    sizeof(uint32_t) +	// gid
+		    sizeof(uint32_t) +  // vmsize_kb
+		    sizeof(uint32_t) +  // vmrss_kb
+		    sizeof(uint32_t) +  // vmswap_kb
+		    sizeof(uint64_t) +  // pfmajor
+		    sizeof(uint64_t) +  // pfminor
 		    sizeof(uint32_t));
 	}
 
 	//
 	// Create the block
 	//
-	bh.block_type = PL_BLOCK_TYPE;
+	bh.block_type = PL_BLOCK_TYPE_V2;
 	bh.block_total_length = scap_normalize_block_len(sizeof(block_header) + totlen + 4);
 
 	if(gzwrite(f, &bh, sizeof(bh)) != sizeof(bh))
@@ -217,7 +222,12 @@ int32_t scap_write_proclist(scap_t *handle, gzFile f)
 		        gzwrite(f, &(tinfo->fdlimit), sizeof(uint64_t)) != sizeof(uint64_t) ||
 		        gzwrite(f, &(tinfo->flags), sizeof(uint32_t)) != sizeof(uint32_t) ||
 		        gzwrite(f, &(tinfo->uid), sizeof(uint32_t)) != sizeof(uint32_t) ||
-		        gzwrite(f, &(tinfo->gid), sizeof(uint32_t)) != sizeof(uint32_t))
+		        gzwrite(f, &(tinfo->gid), sizeof(uint32_t)) != sizeof(uint32_t) ||
+		        gzwrite(f, &(tinfo->vmsize_kb), sizeof(uint32_t)) != sizeof(uint32_t) ||
+		        gzwrite(f, &(tinfo->vmrss_kb), sizeof(uint32_t)) != sizeof(uint32_t) ||
+		        gzwrite(f, &(tinfo->vmswap_kb), sizeof(uint32_t)) != sizeof(uint32_t) ||
+		        gzwrite(f, &(tinfo->pfmajor), sizeof(uint64_t)) != sizeof(uint64_t) ||
+		        gzwrite(f, &(tinfo->pfminor), sizeof(uint64_t)) != sizeof(uint64_t))
 		{
 			snprintf(handle->m_lasterr, SCAP_LASTERR_SIZE, "error writing to file (2)");
 			return SCAP_FAILURE;
@@ -249,7 +259,7 @@ int32_t scap_write_proclist(scap_t *handle, gzFile f)
 //
 // Write the machine info block
 //
-int32_t scap_write_machine_info(scap_t *handle, gzFile f)
+static int32_t scap_write_machine_info(scap_t *handle, gzFile f)
 {
 	block_header bh;
 	uint32_t bt;
@@ -276,7 +286,7 @@ int32_t scap_write_machine_info(scap_t *handle, gzFile f)
 //
 // Write the interface list block
 //
-int32_t scap_write_iflist(scap_t *handle, gzFile f)
+static int32_t scap_write_iflist(scap_t *handle, gzFile f)
 {
 	block_header bh;
 	uint32_t bt;
@@ -367,7 +377,7 @@ int32_t scap_write_iflist(scap_t *handle, gzFile f)
 //
 // Write the user list block
 //
-int32_t scap_write_userlist(scap_t *handle, gzFile f)
+static int32_t scap_write_userlist(scap_t *handle, gzFile f)
 {
 	block_header bh;
 	uint32_t bt;
@@ -709,7 +719,7 @@ int32_t scap_dump(scap_t *handle, scap_dumper_t *d, scap_evt *e, uint16_t cpuid)
 //
 // Load the machine info block
 //
-int32_t scap_read_machine_info(scap_t *handle, gzFile f, uint32_t block_length)
+static int32_t scap_read_machine_info(scap_t *handle, gzFile f, uint32_t block_length)
 {
 	//
 	// Read the section header block
@@ -727,7 +737,7 @@ int32_t scap_read_machine_info(scap_t *handle, gzFile f, uint32_t block_length)
 //
 // Parse a process list block
 //
-int32_t scap_read_proclist(scap_t *handle, gzFile f, uint32_t block_length)
+static int32_t scap_read_proclist(scap_t *handle, gzFile f, uint32_t block_length, uint32_t block_type)
 {
 	size_t readsize;
 	size_t totreadsize = 0;
@@ -740,6 +750,11 @@ int32_t scap_read_proclist(scap_t *handle, gzFile f, uint32_t block_length)
 
 	tinfo.fdlist = NULL;
 	tinfo.flags = 0;
+	tinfo.vmsize_kb = 0;
+	tinfo.vmrss_kb = 0;
+	tinfo.vmswap_kb = 0;
+	tinfo.pfmajor = 0;
+	tinfo.pfminor = 0;
 
 	while(((int32_t)block_length - (int32_t)totreadsize) >= 4)
 	{
@@ -888,6 +903,49 @@ int32_t scap_read_proclist(scap_t *handle, gzFile f, uint32_t block_length)
 
 		totreadsize += readsize;
 
+		if(block_type == PL_BLOCK_TYPE_V2 || block_type == PL_BLOCK_TYPE_V2_INT)
+		{
+			//
+			// vmsize_kb
+			//
+			readsize = gzread(f, &(tinfo.vmsize_kb), sizeof(uint32_t));
+			CHECK_READ_SIZE(readsize, sizeof(uint32_t));
+
+			totreadsize += readsize;
+
+			//
+			// vmrss_kb
+			//
+			readsize = gzread(f, &(tinfo.vmrss_kb), sizeof(uint32_t));
+			CHECK_READ_SIZE(readsize, sizeof(uint32_t));
+
+			totreadsize += readsize;
+
+			//
+			// vmswap_kb
+			//
+			readsize = gzread(f, &(tinfo.vmswap_kb), sizeof(uint32_t));
+			CHECK_READ_SIZE(readsize, sizeof(uint32_t));
+
+			totreadsize += readsize;
+
+			//
+			// pfmajor
+			//
+			readsize = gzread(f, &(tinfo.pfmajor), sizeof(uint64_t));
+			CHECK_READ_SIZE(readsize, sizeof(uint64_t));
+
+			totreadsize += readsize;
+
+			//
+			// pfminor
+			//
+			readsize = gzread(f, &(tinfo.pfminor), sizeof(uint64_t));
+			CHECK_READ_SIZE(readsize, sizeof(uint64_t));
+
+			totreadsize += readsize;
+		}
+
 		//
 		// All parsed. Allocate the new entry and copy the temp one into into it.
 		//
@@ -932,7 +990,7 @@ int32_t scap_read_proclist(scap_t *handle, gzFile f, uint32_t block_length)
 //
 // Parse an interface list block
 //
-int32_t scap_read_iflist(scap_t *handle, gzFile f, uint32_t block_length)
+static int32_t scap_read_iflist(scap_t *handle, gzFile f, uint32_t block_length)
 {
 	int32_t res = SCAP_SUCCESS;
 	size_t readsize;
@@ -1257,7 +1315,7 @@ scap_read_iflist_error:
 //
 // Parse a user list block
 //
-int32_t scap_read_userlist(scap_t *handle, gzFile f, uint32_t block_length)
+static int32_t scap_read_userlist(scap_t *handle, gzFile f, uint32_t block_length)
 {
 	size_t readsize;
 	size_t totreadsize = 0;
@@ -1466,7 +1524,7 @@ int32_t scap_read_userlist(scap_t *handle, gzFile f, uint32_t block_length)
 //
 // Parse a process list block
 //
-int32_t scap_read_fdlist(scap_t *handle, gzFile f, uint32_t block_length)
+static int32_t scap_read_fdlist(scap_t *handle, gzFile f, uint32_t block_length)
 {
 	size_t readsize;
 	size_t totreadsize = 0;
@@ -1598,9 +1656,11 @@ int32_t scap_read_init(scap_t *handle, gzFile f)
 				return SCAP_FAILURE;
 			}
 			break;
-		case PL_BLOCK_TYPE:
-		case PL_BLOCK_TYPE_INT:
-			if(scap_read_proclist(handle, f, bh.block_total_length - sizeof(block_header) - 4) != SCAP_SUCCESS)
+		case PL_BLOCK_TYPE_V1:
+		case PL_BLOCK_TYPE_V2:
+		case PL_BLOCK_TYPE_V1_INT:
+		case PL_BLOCK_TYPE_V2_INT:
+			if(scap_read_proclist(handle, f, bh.block_total_length - sizeof(block_header) - 4, bh.block_type) != SCAP_SUCCESS)
 			{
 				return SCAP_FAILURE;
 			}

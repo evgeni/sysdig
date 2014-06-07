@@ -248,6 +248,74 @@ static void initialize_chisels()
 #endif
 }
 
+//
+// Parse the command line following a chisel to consume the chisel command line.
+// We use the following strategy:
+//  - if the chisel has no arguments, we don't consume anything
+//  - if the chisel has at least one required argument, we consume the next command line token
+//  - if the chisel has only optional arguments, we consume the next token, unless
+//    - there is no next token
+//    - the next token starts with a '-'
+//    - the rest of the command line contains a valid filter
+//
+static void parse_chisel_args(sinsp_chisel* ch, sinsp* inspector, int optind, int argc, char **argv, int32_t* n_filterargs)
+{
+	uint32_t nargs = ch->get_n_args();
+	uint32_t nreqargs = ch->get_n_required_args();
+	string args;
+
+	if(nargs != 0)
+	{
+		if(optind > (int32_t)argc)
+		{
+			throw sinsp_exception("invalid number of arguments for chisel " + string(optarg) + ", " + to_string((long long int)nargs) + " expected.");
+		}
+		else if(optind < (int32_t)argc)
+		{
+			args = argv[optind];
+
+			if(nreqargs != 0)
+			{
+				ch->set_args(args);
+				(*n_filterargs)++;
+			}
+			else
+			{
+				if(args[0] != '-')
+				{
+					string testflt;
+
+					for(int32_t j = optind; j < argc; j++)
+					{
+						testflt += argv[j];
+						if(j < argc - 1)
+						{
+							testflt += " ";
+						}
+					}
+
+					try
+					{
+						sinsp_filter df(inspector, testflt);
+					}
+					catch(...)
+					{
+						ch->set_args(args);
+						(*n_filterargs)++;
+					}
+				}
+			}
+		}
+		else
+		{
+			if(nreqargs != 0)
+			{
+				throw sinsp_exception("missing arguments for chisel " + string(optarg));
+			}
+		}
+	}
+}
+
 static void free_chisels()
 {
 #ifdef HAS_CHISELS
@@ -291,6 +359,24 @@ static void chisels_do_timeout(sinsp_evt* ev)
 #endif
 }
 
+void handle_end_of_file(bool print_progress)
+{
+	//
+	// Reached the end of a trace file.
+	// If we are reporting prgress, this is 100%
+	//
+	if(print_progress)
+	{
+		fprintf(stderr, "100.00\n");
+		fflush(stderr);
+	}
+
+	//
+	// Notify the chisels that we're exiting.
+	//
+	chisels_on_capture_end();
+}
+
 //
 // Event processing loop
 //
@@ -325,6 +411,15 @@ captureinfo do_inspect(sinsp* inspector,
 			// Notify the chisels that we're exiting.
 			//
 			chisels_on_capture_end();
+
+			// Notify the formatter that we are at the 
+			// end of the capture in case it needs to 
+			// write any terminating characters
+			if(formatter->on_capture_end(&line))
+			{
+				cout << line << endl;
+			}
+
 			break;
 		}
 
@@ -340,25 +435,12 @@ captureinfo do_inspect(sinsp* inspector,
 				//
 				chisels_do_timeout(ev);
 			}
+
 			continue;
 		}
 		else if(res == SCAP_EOF)
 		{
-			//
-			// Reached the end of a trace file.
-			// If we are reporting prgress, this is 100%
-			//
-			if(print_progress)
-			{
-				fprintf(stderr, "100.00\n");
-				fflush(stderr);
-			}
-
-			//
-			// Notify the chisels that we're exiting.
-			//
-			chisels_on_capture_end();
-
+			handle_end_of_file(print_progress);
 			break;
 		}
 		else if(res != SCAP_SUCCESS)
@@ -367,7 +449,7 @@ captureinfo do_inspect(sinsp* inspector,
 			// Event read error.
 			// Notify the chisels that we're exiting, and then die with an error.
 			//
-			chisels_on_capture_end();
+			handle_end_of_file(print_progress);
 			cerr << "res = " << res << endl;
 			throw sinsp_exception(inspector->getlasterr().c_str());
 		}
@@ -460,7 +542,11 @@ captureinfo do_inspect(sinsp* inspector,
 					}
 				}
 
-				cout << line << endl;
+				cout << line;
+				if( inspector->get_buffer_format() != sinsp_evt::PF_JSON)
+				{
+					cout << endl;
+				}
 			}
 		}
 	}
@@ -600,22 +686,7 @@ int main(int argc, char **argv)
 					}
 
 					sinsp_chisel* ch = new sinsp_chisel(inspector, optarg);
-					uint32_t nargs = ch->get_n_args();
-					vector<string> args;
-
-					for(uint32_t j = 0; j < nargs; j++)
-					{
-						if(optind + j >= (uint32_t)argc)
-						{
-							throw sinsp_exception("invalid number of arguments for chisel " + string(optarg) + ", " + to_string((long long int)nargs) + " expected.");
-						}
-
-						args.push_back(argv[optind + j]);
-						n_filterargs++;
-					}
-
-					ch->set_args(&args);
-
+					parse_chisel_args(ch, inspector, optind, argc, argv, &n_filterargs);
 					g_chisels.push_back(ch);
 				}
 #endif
@@ -926,27 +997,7 @@ int main(int argc, char **argv)
 				{
 					open_success = true;
 
-					try
-					{
-						system("modprobe sysdig-probe > /dev/null 2> /dev/null");
-
-						inspector->open("");
-					}
-					catch(sinsp_exception e)
-					{
-						open_success = false;
-					}
-				}
-
-				//
-				// No luck with modprobe either.
-				// Maybe this is a version of sysdig that was compiled from the
-				// sources, so let's make one last attempt with insmod and the
-				// path to the driver directory.
-				//
-				if(!open_success)
-				{
-					system("insmod ../../driver/sysdig-probe.ko > /dev/null 2> /dev/null");
+					system("modprobe sysdig-probe > /dev/null 2> /dev/null");
 
 					inspector->open("");
 				}
@@ -1005,10 +1056,12 @@ int main(int argc, char **argv)
 	catch(sinsp_exception& e)
 	{
 		cerr << e.what() << endl;
+		handle_end_of_file(print_progress);
 		res = EXIT_FAILURE;
 	}
 	catch(...)
 	{
+		handle_end_of_file(print_progress);
 		res = EXIT_FAILURE;
 	}
 

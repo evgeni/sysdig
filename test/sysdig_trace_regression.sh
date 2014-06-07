@@ -29,7 +29,7 @@ if [ ! -d "$BASELINEDIR" ]; then
 fi
 
 # Fields
-$BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-p\"*%fd.num %fd.type %fd.typechar %fd.name %fd.directory %fd.cip %fd.sip %fd.cport %fd.sport %fd.l4proto %fd.sockfamily %fd.is_server\"" $TRACEDIR $RESULTDIR/fd_fields $BASELINEDIR/fd_fields
+$BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-p\"*%fd.num %fd.type %fd.typechar %fd.name %fd.directory %fd.filename %fd.cip %fd.sip %fd.cport %fd.sport %fd.l4proto %fd.sockfamily %fd.is_server\"" $TRACEDIR $RESULTDIR/fd_fields $BASELINEDIR/fd_fields
 $BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-p%thread.exectime" $TRACEDIR $RESULTDIR/exetime $BASELINEDIR/exetime
 # Category: CPU Usage
 $BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-ctopprocs_cpu" $TRACEDIR $RESULTDIR/topprocs_cpu $BASELINEDIR/topprocs_cpu
@@ -55,6 +55,7 @@ $BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-ctopprocs_net" $TRACEDIR $RES
 # Category: Performance
 $BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-cbottlenecks" $TRACEDIR $RESULTDIR/bottlenecks $BASELINEDIR/bottlenecks
 $BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-cfileslower 1000" $TRACEDIR $RESULTDIR/fileslower $BASELINEDIR/fileslower
+$BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-cnetlower 10" $TRACEDIR $RESULTDIR/netlower $BASELINEDIR/netlower
 $BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-cproc_exec_time" $TRACEDIR $RESULTDIR/proc_exec_time $BASELINEDIR/proc_exec_time
 $BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-cscallslower 1000" $TRACEDIR $RESULTDIR/scallslower $BASELINEDIR/scallslower
 $BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-ctopscalls" $TRACEDIR $RESULTDIR/topscalls $BASELINEDIR/topscalls
@@ -64,3 +65,5 @@ $BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-cspy_users" $TRACEDIR $RESULT
 # Category: Errors
 $BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-ctopfiles_errors" $TRACEDIR $RESULTDIR/topfiles_errors $BASELINEDIR/topfiles_errors
 $BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-ctopprocs_errors" $TRACEDIR $RESULTDIR/topprocs_errors $BASELINEDIR/topprocs_errors
+# JSON
+$BASEDIR/sysdig_batch_parser.sh $SYSDIG $CHISELS "-j -n 10000" $TRACEDIR $RESULTDIR/fd_fields_json $BASELINEDIR/fd_fields_json

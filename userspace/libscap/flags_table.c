@@ -74,7 +74,7 @@ const struct ppm_name_value file_flags[] = {
 	{"O_DSYNC", PPM_O_DSYNC},
 	{"O_APPEND", PPM_O_APPEND},
 	{"O_CREAT", PPM_O_CREAT},
-	{"O_RDWR",PPM_O_RDWR},
+	{"O_RDWR", PPM_O_RDWR},
 	{"O_WRONLY", PPM_O_WRONLY},
 	{"O_RDONLY", PPM_O_RDONLY},
 	{"O_NONE", PPM_O_NONE},
@@ -152,11 +152,6 @@ const struct ppm_name_value shutdown_how[] = {
 	{0, 0},
 };
 
-const struct ppm_name_value openat_flags[] = {
-	{"AT_FDCWD", PPM_AT_FDCWD},
-	{0, 0},
-};
-
 const struct ppm_name_value rlimit_resources[] = {
 	{"RLIMIT_UNKNOWN", PPM_RLIMIT_UNKNOWN},
 	{"RLIMIT_RTTIME", PPM_RLIMIT_RTTIME},
@@ -206,5 +201,36 @@ const struct ppm_name_value fcntl_commands[] = {
 	{"F_GETFD", PPM_FCNTL_F_GETFD},
 	{"F_DUPFD", PPM_FCNTL_F_DUPFD},
 	{"UNKNOWN", PPM_FCNTL_UNKNOWN},
+	{0, 0},
+};
+
+const struct ppm_name_value prot_flags[] = {
+	{"PROT_READ", PPM_PROT_READ},
+	{"PROT_WRITE", PPM_PROT_WRITE},
+	{"PROT_EXEC", PPM_PROT_EXEC},
+	{"PROT_SEM", PPM_PROT_SEM},
+	{"PROT_GROWSDOWN", PPM_PROT_GROWSDOWN},
+	{"PROT_GROWSUP", PPM_PROT_GROWSUP},
+	{"PROT_SAO", PPM_PROT_SAO},
+	{"PROT_NONE", PPM_PROT_NONE},
+	{0, 0},
+};
+
+const struct ppm_name_value mmap_flags[] = {
+	{"MAP_SHARED", PPM_MAP_SHARED},
+	{"MAP_PRIVATE", PPM_MAP_PRIVATE},
+	{"MAP_FIXED", PPM_MAP_FIXED},
+	{"MAP_ANONYMOUS", PPM_MAP_ANONYMOUS},
+	{"MAP_32BIT", PPM_MAP_32BIT},
+	{"MAP_RENAME", PPM_MAP_RENAME},
+	{"MAP_NORESERVE", PPM_MAP_NORESERVE},
+	{"MAP_POPULATE", PPM_MAP_POPULATE},
+	{"MAP_NONBLOCK", PPM_MAP_NONBLOCK},
+	{"MAP_GROWSDOWN", PPM_MAP_GROWSDOWN},
+	{"MAP_DENYWRITE", PPM_MAP_DENYWRITE},
+	{"MAP_EXECUTABLE", PPM_MAP_EXECUTABLE},
+	{"MAP_INHERIT", PPM_MAP_INHERIT},
+	{"MAP_FILE", PPM_MAP_FILE},
+	{"MAP_LOCKED", PPM_MAP_LOCKED},
 	{0, 0},
 };
