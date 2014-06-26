@@ -56,7 +56,7 @@ static void signal_callback(int signal)
 void replace_in_place(string& str, string substr_to_replace, string new_substr)
 {
 	size_t index = 0;
-	uint32_t nsize = substr_to_replace.size();
+	uint32_t nsize = (uint32_t)substr_to_replace.size();
 
 	while (true)
 	{
@@ -139,8 +139,9 @@ static void usage()
 "Output format:\n\n"
 "By default, sysdig prints the information for each captured event on a single\n"
 " line with the following format:\n\n"
-"<evt.time> %%evt.cpu %%proc.name (%%thread.tid) %%evt.dir %%evt.type %%evt.args\n\n"
+" %%evt.num %%evt.time %%evt.cpu %%proc.name (%%thread.tid) %%evt.dir %%evt.type %%evt.args\n\n"
 "where:\n"
+" evt.num is the incremental event number\n"
 " evt.time is the event timestamp\n"
 " evt.cpu is the CPU number where the event was captured\n"
 " proc.name is the name of the process that generated the event\n"

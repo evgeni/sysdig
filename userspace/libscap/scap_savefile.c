@@ -981,7 +981,7 @@ static int32_t scap_read_proclist(scap_t *handle, gzFile f, uint32_t block_lengt
 	}
 	padding_len = block_length - totreadsize;
 
-	readsize = gzread(f, &padding, padding_len);
+	readsize = (size_t)gzread(f, &padding, (unsigned int)padding_len);
 	CHECK_READ_SIZE(readsize, padding_len);
 
 	return SCAP_SUCCESS;
@@ -1515,7 +1515,7 @@ static int32_t scap_read_userlist(scap_t *handle, gzFile f, uint32_t block_lengt
 	}
 	padding_len = block_length - totreadsize;
 
-	readsize = gzread(f, &padding, padding_len);
+	readsize = gzread(f, &padding, (unsigned int)padding_len);
 	CHECK_READ_SIZE(readsize, padding_len);
 
 	return SCAP_SUCCESS;
@@ -1598,7 +1598,7 @@ static int32_t scap_read_fdlist(scap_t *handle, gzFile f, uint32_t block_length)
 	}
 	padding_len = block_length - totreadsize;
 
-	readsize = gzread(f, &padding, padding_len);
+	readsize = gzread(f, &padding, (unsigned int)padding_len);
 	CHECK_READ_SIZE(readsize, padding_len);
 
 	return SCAP_SUCCESS;
@@ -1615,6 +1615,12 @@ int32_t scap_read_init(scap_t *handle, gzFile f)
 	size_t readsize;
 	size_t toread;
 	int fseekres;
+	int8_t found_mi = 0;
+	int8_t found_pl = 0;
+	int8_t found_fdl = 0;
+	int8_t found_il = 0;
+	int8_t found_ul = 0;
+	int8_t found_ev = 0;
 
 	//
 	// Read the section header block
@@ -1651,6 +1657,8 @@ int32_t scap_read_init(scap_t *handle, gzFile f)
 		{
 		case MI_BLOCK_TYPE:
 		case MI_BLOCK_TYPE_INT:
+			found_mi = 1;
+
 			if(scap_read_machine_info(handle, f, bh.block_total_length - sizeof(block_header) - 4) != SCAP_SUCCESS)
 			{
 				return SCAP_FAILURE;
@@ -1660,6 +1668,8 @@ int32_t scap_read_init(scap_t *handle, gzFile f)
 		case PL_BLOCK_TYPE_V2:
 		case PL_BLOCK_TYPE_V1_INT:
 		case PL_BLOCK_TYPE_V2_INT:
+			found_pl = 1;
+
 			if(scap_read_proclist(handle, f, bh.block_total_length - sizeof(block_header) - 4, bh.block_type) != SCAP_SUCCESS)
 			{
 				return SCAP_FAILURE;
@@ -1667,6 +1677,8 @@ int32_t scap_read_init(scap_t *handle, gzFile f)
 			break;
 		case FDL_BLOCK_TYPE:
 		case FDL_BLOCK_TYPE_INT:
+			found_fdl = 1;
+
 			if(scap_read_fdlist(handle, f, bh.block_total_length - sizeof(block_header) - 4) != SCAP_SUCCESS)
 			{
 				return SCAP_FAILURE;
@@ -1674,13 +1686,15 @@ int32_t scap_read_init(scap_t *handle, gzFile f)
 			break;
 		case EV_BLOCK_TYPE:
 		case EV_BLOCK_TYPE_INT:
+			found_ev = 1;
+
 			//
 			// We're done with the metadata headers. Rewind the file position so we are aligned to start reading the events.
 			//
 			fseekres = gzseek(f, (long)0 - sizeof(bh), SEEK_CUR);
 			if(fseekres != -1)
 			{
-				return SCAP_SUCCESS;
+				break;
 			}
 			else
 			{
@@ -1689,6 +1703,8 @@ int32_t scap_read_init(scap_t *handle, gzFile f)
 			}
 		case IL_BLOCK_TYPE:
 		case IL_BLOCK_TYPE_INT:
+			found_il = 1;
+
 			if(scap_read_iflist(handle, f, bh.block_total_length - sizeof(block_header) - 4) != SCAP_SUCCESS)
 			{
 				return SCAP_FAILURE;
@@ -1696,6 +1712,8 @@ int32_t scap_read_init(scap_t *handle, gzFile f)
 			break;
 		case UL_BLOCK_TYPE:
 		case UL_BLOCK_TYPE_INT:
+			found_ul = 1;
+
 			if(scap_read_userlist(handle, f, bh.block_total_length - sizeof(block_header) - 4) != SCAP_SUCCESS)
 			{
 				return SCAP_FAILURE;
@@ -1706,7 +1724,7 @@ int32_t scap_read_init(scap_t *handle, gzFile f)
 			// Unknwon block type. Skip the block.
 			//
 			toread = bh.block_total_length - sizeof(block_header) - 4;
-			fseekres = gzseek(f, toread, SEEK_CUR);
+			fseekres = (int)gzseek(f, (long)toread, SEEK_CUR);
 			if(fseekres == -1)
 			{
 				snprintf(handle->m_lasterr, SCAP_LASTERR_SIZE, "corrupted input file. Can't skip block of type %x and size %u.",
@@ -1714,6 +1732,11 @@ int32_t scap_read_init(scap_t *handle, gzFile f)
 				         (unsigned int)toread);
 				return SCAP_FAILURE;
 			}
+			break;
+		}
+
+		if(found_ev)
+		{
 			break;
 		}
 
@@ -1730,6 +1753,41 @@ int32_t scap_read_init(scap_t *handle, gzFile f)
 			         bt);
 			return SCAP_FAILURE;
 		}
+	}
+
+	if(!found_mi)
+	{
+		snprintf(handle->m_lasterr, SCAP_LASTERR_SIZE, "corrupted input file. Can't find machine info block.");			
+		ASSERT(false);
+		return SCAP_FAILURE;
+	}
+
+	if(!found_ul)
+	{
+		snprintf(handle->m_lasterr, SCAP_LASTERR_SIZE, "corrupted input file. Can't find user list block.");			
+		ASSERT(false);
+		return SCAP_FAILURE;
+	}
+
+	if(!found_il)
+	{
+		snprintf(handle->m_lasterr, SCAP_LASTERR_SIZE, "corrupted input file. Can't find interface list block.");			
+		ASSERT(false);
+		return SCAP_FAILURE;
+	}
+
+	if(!found_fdl)
+	{
+		snprintf(handle->m_lasterr, SCAP_LASTERR_SIZE, "corrupted input file. Can't find file descriptor list block.");			
+		ASSERT(false);
+		return SCAP_FAILURE;
+	}
+
+	if(!found_pl)
+	{
+		snprintf(handle->m_lasterr, SCAP_LASTERR_SIZE, "corrupted input file. Can't find process list block.");			
+		ASSERT(false);
+		return SCAP_FAILURE;
 	}
 
 	return SCAP_SUCCESS;
