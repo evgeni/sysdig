@@ -1,3 +1,13 @@
+sysdig (0.1.84-1) unstable; urgency=medium
+
+  * New upstream release
+    + Now supports Lua as an alternative to LuaJIT, thanks Felix Geyer
+  * Add Lua as an alternative Build-Dependency
+  * Drop use-json.h-from-the-include-path-instead-of-hardcodi.patch
+    it was merged upstream
+
+ -- Evgeni Golov <evgeni@debian.org>  Fri, 27 Jun 2014 07:21:40 +0200
+
 sysdig (0.1.83-1) unstable; urgency=medium
 
   * New upstream release
