@@ -24,3 +24,6 @@ override_dh_auto_configure:
 override_dh_auto_install-indep:
 	dh_auto_install -i
 	dh_dkms -i -psysdig-dkms -- debian/tmp/usr/src/sysdig-$(sver)/dkms.conf
+
+override_dh_install:
+	dh_install --list-missing
