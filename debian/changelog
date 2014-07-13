@@ -1,3 +1,11 @@
+sysdig (0.1.85-2) unstable; urgency=medium
+
+  * Use dh_install --list-missing, thanks Felix Geyer
+  * define /etc, so cmake does not try to install to /usr/etc...
+  * properly install bash and zsh completions, thanks Felix Geyer
+
+ -- Evgeni Golov <evgeni@debian.org>  Sun, 13 Jul 2014 11:52:44 +0200
+
 sysdig (0.1.85-1) unstable; urgency=medium
 
   * New upstream release
