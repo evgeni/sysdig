@@ -80,6 +80,17 @@ using namespace std;
 
 #define ONE_SECOND_IN_NS 1000000000LL
 
+//
+// Protocol decoder callback type
+//
+typedef enum sinsp_pd_callback_type
+{
+	CT_OPEN,
+	CT_CONNECT,
+	CT_READ,
+	CT_WRITE
+}sinsp_pd_callback_type;
+
 #include "tuples.h"
 #include "fdinfo.h"
 #include "threadinfo.h"
@@ -90,6 +101,8 @@ class sinsp_partial_transaction;
 class sinsp_parser;
 class sinsp_analyzer;
 class sinsp_filter;
+class cycle_writer;
+class sinsp_protodecoder;
 
 vector<string> sinsp_split(const string &s, char delim);
 
@@ -279,6 +292,11 @@ public:
 	   of failure.
 	*/
 	void autodump_start(const string& dump_filename, bool compress);
+ 
+ 	/*!
+	  \brief Cycles the file pointer to a new capture file
+	*/
+	void autodump_next_file();
 
 	/*!
 	  \brief Stops an event dump that was started with \ref autodump_start().
@@ -448,6 +466,20 @@ public:
 	bool is_debug_enabled();
 
 	/*!
+	  \brief Lets a filter plugin request a protocol decoder.
+
+	  \param the name of the required decoder
+	*/
+	sinsp_protodecoder* require_protodecoder(string decoder_name);
+
+	/*!
+	  \brief Lets a filter plugin request a protocol decoder.
+
+	  \param the name of the required decoder
+	*/
+	void protodecoder_register_reset(sinsp_protodecoder* dec);
+
+	/*!
 	  \brief XXX.
 	*/
 	double get_read_progress();
@@ -466,6 +498,8 @@ public:
 	uint32_t reserve_thread_memory(uint32_t size);
 
 	sinsp_parser* get_parser();
+
+	bool setup_cycle_writer(string base_file_name, int rollover_mb, int duration_seconds, int file_limit, bool do_cycle, bool compress);
 
 VISIBILITY_PRIVATE
 
@@ -486,6 +520,7 @@ private:
 	int64_t m_filesize;
 	bool m_islive;
 	bool m_isdebug_enabled;
+	bool m_compress;
 	sinsp_evt m_evt;
 	string m_lasterr;
 	int64_t m_tid_to_remove;
@@ -543,9 +578,19 @@ private:
 	unordered_map<uint32_t, scap_groupinfo*> m_grouplist;
 
 	//
+	// The cycle-writer for files
+	//
+	cycle_writer* m_cycle_writer;
+
+	//
 	// Some dropping infrastructure
 	//
 	bool m_isdropping;
+
+	//
+	// Protocol decoding state
+	//
+	vector<sinsp_protodecoder*> m_decoders_reset_list;
 
 	friend class sinsp_parser;
 	friend class sinsp_analyzer;
@@ -557,6 +602,7 @@ private:
 	friend class sinsp_dumper;
 	friend class sinsp_analyzer_fd_listener;
 	friend class sinsp_chisel;
+	friend class sinsp_protodecoder;
 
 	template<class TKey,class THash,class TCompare> friend class sinsp_connection_manager;
 };

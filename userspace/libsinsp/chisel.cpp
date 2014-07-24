@@ -23,6 +23,7 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef _WIN32
 #include <limits.h>
 #include <stdlib.h>
+#include <unistd.h>
 #endif
 #include <third-party/tinydir.h>
 #include <json/json.h>
@@ -421,6 +422,18 @@ public:
 		return 1;
 	}
 
+	static int is_tty(lua_State *ls) 
+	{
+#ifdef _WIN32
+		int use_color = false;
+#else
+		int use_color = isatty(1);
+#endif
+
+		lua_pushboolean(ls, use_color);
+		return 1;
+	}
+
 	static int get_machine_info(lua_State *ls) 
 	{
 		lua_getglobal(ls, "sichisel");
@@ -566,6 +579,7 @@ const static struct luaL_reg ll_sysdig [] =
 	{"set_filter", &lua_cbacks::set_global_filter},
 	{"set_snaplen", &lua_cbacks::set_snaplen},
 	{"is_live", &lua_cbacks::is_live},
+	{"is_tty", &lua_cbacks::is_tty},
 	{"get_machine_info", &lua_cbacks::get_machine_info},
 	{"get_output_format", &lua_cbacks::get_output_format},
 	{"make_ts", &lua_cbacks::make_ts},
@@ -1233,7 +1247,7 @@ void sinsp_chisel::set_args(string args)
 	//
 	// Push the arguments
 	//
-	for(j = 0; j < m_lua_script_info.m_args.size(); j++)
+	for(j = 0; j < m_argvals.size(); j++)
 	{
 		lua_getglobal(m_ls, "on_set_arg");
 		if(!lua_isfunction(m_ls, -1))

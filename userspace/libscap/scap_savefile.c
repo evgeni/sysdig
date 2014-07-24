@@ -674,6 +674,14 @@ void scap_dump_flush(scap_dumper_t *d)
 	gzflush((gzFile)d, Z_FULL_FLUSH);
 }
 
+// Tell me how many bytes we will have written if we did.
+int32_t scap_number_of_bytes_to_write(scap_evt *e, uint16_t cpuid, int32_t *bytes)
+{
+	*bytes = scap_normalize_block_len(sizeof(block_header) + sizeof(cpuid) + e->len + 4);
+
+	return SCAP_SUCCESS;
+}
+
 //
 // Write an event to a dump file
 //
@@ -701,7 +709,7 @@ int32_t scap_dump(scap_t *handle, scap_dumper_t *d, scap_evt *e, uint16_t cpuid)
 	}
 
 	//
-	// Enalbe this to make sure that everything is saved to disk during the tests
+	// Enable this to make sure that everything is saved to disk during the tests
 	//
 #if 0
 	fflush(f);
@@ -1651,6 +1659,18 @@ int32_t scap_read_init(scap_t *handle, gzFile f)
 	while(true)
 	{
 		readsize = gzread(f, &bh, sizeof(bh));
+
+		//
+		// If we don't find the event block header,
+		// it means there is no event in the file.
+		//
+		if (readsize == 0 && !found_ev && found_mi && found_pl &&
+			found_il && found_fdl && found_ul)
+		{
+			snprintf(handle->m_lasterr, SCAP_LASTERR_SIZE, "no events in file");
+			return SCAP_FAILURE;
+		}
+
 		CHECK_READ_SIZE(readsize, sizeof(bh));
 
 		switch(bh.block_type)
