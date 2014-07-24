@@ -1,3 +1,13 @@
+sysdig (0.1.86-1) unstable; urgency=medium
+
+  * New upstream release
+    + Does not FTBFS on !Linux anymore
+      Closes: #755362
+  * Rebuild manpage using pandoc, instead of shipping the prebuilt version
+  * Ship all upstream Zsh files
+
+ -- Evgeni Golov <evgeni@debian.org>  Thu, 24 Jul 2014 07:55:34 +0200
+
 sysdig (0.1.85-2) unstable; urgency=medium
 
   * Use dh_install --list-missing, thanks Felix Geyer
