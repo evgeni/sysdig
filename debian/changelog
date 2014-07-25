@@ -1,3 +1,10 @@
+sysdig (0.1.86-2) unstable; urgency=medium
+
+  * properly install Bash/Zsh completion on !Linux
+    Closes: #755362
+
+ -- Evgeni Golov <evgeni@debian.org>  Fri, 25 Jul 2014 08:38:36 +0200
+
 sysdig (0.1.86-1) unstable; urgency=medium
 
   * New upstream release
