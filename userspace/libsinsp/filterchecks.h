@@ -253,7 +253,6 @@ public:
 	sinsp_filter_check* allocate_new();
 	int32_t parse_field_name(const char* str);
 	uint8_t* extract(sinsp_evt *evt, OUT uint32_t* len);
-	uint8_t* extract_fdtype(sinsp_fdinfo_t* fdinfo);
 	bool compare_ip(sinsp_evt *evt);
 	bool compare_port(sinsp_evt *evt);
 	bool compare(sinsp_evt *evt);
@@ -357,16 +356,19 @@ public:
 		TYPE_ARGS = 16,
 		TYPE_ARGSTR = 17,
 		TYPE_ARGRAW = 18,
-		TYPE_BUFFER = 19,
-		TYPE_RESSTR = 20,
-		TYPE_RESRAW = 21,
-		TYPE_FAILED = 22,
-		TYPE_ISIO = 23,
-		TYPE_ISIO_READ = 24,
-		TYPE_ISIO_WRITE = 25,
-		TYPE_IODIR = 26,
-		TYPE_ISWAIT = 27,
-		TYPE_COUNT = 28,
+		TYPE_INFO = 19,
+		TYPE_BUFFER = 20,
+		TYPE_RESSTR = 21,
+		TYPE_RESRAW = 22,
+		TYPE_FAILED = 23,
+		TYPE_ISIO = 24,
+		TYPE_ISIO_READ = 25,
+		TYPE_ISIO_WRITE = 26,
+		TYPE_IODIR = 27,
+		TYPE_ISWAIT = 28,
+		TYPE_ISSYSLOG = 29,
+		TYPE_COUNT = 30,
+		TYPE_AROUND = 31,
 	};
 
 	sinsp_filter_check_event();
@@ -380,6 +382,7 @@ public:
 
 	uint64_t m_first_ts;
 	uint64_t m_u64val;
+	uint64_t m_tsdelta;
 	uint32_t m_u32val;
 	string m_strstorage;
 	string m_argname;

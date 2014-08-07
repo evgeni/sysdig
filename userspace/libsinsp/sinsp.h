@@ -88,7 +88,8 @@ typedef enum sinsp_pd_callback_type
 	CT_OPEN,
 	CT_CONNECT,
 	CT_READ,
-	CT_WRITE
+	CT_WRITE,
+	CT_TUPLE_CHANGE,
 }sinsp_pd_callback_type;
 
 #include "tuples.h"
@@ -264,6 +265,14 @@ public:
 	   the filter is invalid.
 	*/
 	void set_filter(const string& filter);
+
+	/*!
+	  \brief Return the filter set for this capture.
+
+	  \return the filter previously set with \ref set_filter(), or an empty 
+	   string if no filter has been set yet.
+	*/
+	const string get_filter();
 #endif
 
 	/*!
@@ -359,7 +368,7 @@ public:
 	  @throws a sinsp_exception containing the error string is thrown in case
 	   of failure.
 	*/
-	sinsp_threadinfo* get_thread(int64_t tid, bool query_os_if_not_found);
+	sinsp_threadinfo* get_thread(int64_t tid, bool query_os_if_not_found, bool lookup_only);
 
 	/*!
 	  \brief Return the table with all the machine users.
@@ -461,6 +470,15 @@ public:
 	void set_debug_mode(bool enable_debug);
 
 	/*!
+	  \brief Set the fatfile mode when writing events to file.
+
+	  \note fatfile mode involves saving "hidden" events in the trace file 
+	   that make it possible to preserve full state even when filters that
+	   would drop state packets are used during the capture.
+	*/
+	void set_fatfile_dump_mode(bool enable_fatfile);
+
+	/*!
 	  \brief Returns true if the debug mode is enabled.
 	*/
 	bool is_debug_enabled();
@@ -478,6 +496,15 @@ public:
 	  \param the name of the required decoder
 	*/
 	void protodecoder_register_reset(sinsp_protodecoder* dec);
+
+	/*!
+	  \brief If this is an offline capture, return the name of the file that is
+	   being read, otherwise return an empty string.
+	*/
+	string get_input_filename()
+	{
+		return m_input_filename;
+	}
 
 	/*!
 	  \brief XXX.
@@ -512,14 +539,17 @@ private:
 	void import_thread_table();
 	void import_ifaddr_list();
 	void import_user_list();
+	void add_protodecoders();
 
 	void add_thread(const sinsp_threadinfo& ptinfo);
-	void remove_thread(int64_t tid);
+	void remove_thread(int64_t tid, bool force);
 
 	scap_t* m_h;
 	int64_t m_filesize;
 	bool m_islive;
+	string m_input_filename;
 	bool m_isdebug_enabled;
+	bool m_isfatfile_enabled;
 	bool m_compress;
 	sinsp_evt m_evt;
 	string m_lasterr;
@@ -542,6 +572,7 @@ private:
 #ifdef HAS_FILTERING
 	uint64_t m_firstevent_ts;
 	sinsp_filter* m_filter;
+	string m_filterstring;
 #endif
 
 	//
@@ -581,6 +612,7 @@ private:
 	// The cycle-writer for files
 	//
 	cycle_writer* m_cycle_writer;
+	bool m_write_cycling;
 
 	//
 	// Some dropping infrastructure
@@ -603,6 +635,7 @@ private:
 	friend class sinsp_analyzer_fd_listener;
 	friend class sinsp_chisel;
 	friend class sinsp_protodecoder;
+	friend class lua_cbacks;
 
 	template<class TKey,class THash,class TCompare> friend class sinsp_connection_manager;
 };

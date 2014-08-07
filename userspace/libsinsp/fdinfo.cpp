@@ -19,6 +19,7 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef _WIN32
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
+#include <algorithm>
 #endif
 #include "sinsp.h"
 #include "sinsp_int.h"
@@ -75,6 +76,46 @@ template<> char sinsp_fdinfo_t::get_typechar()
 		ASSERT(false);
 		return '?';
 	}
+}
+
+template<> char* sinsp_fdinfo_t::get_typestring()
+{
+	switch(m_type)
+	{
+	case SCAP_FD_FILE:
+		return (char*)"file";
+	case SCAP_FD_DIRECTORY:
+		return (char*)"directory";
+	case SCAP_FD_IPV4_SOCK:
+	case SCAP_FD_IPV4_SERVSOCK:
+		return (char*)"ipv4";
+	case SCAP_FD_IPV6_SOCK:
+	case SCAP_FD_IPV6_SERVSOCK:
+		return (char*)"ipv6";
+	case SCAP_FD_UNIX_SOCK:
+		return (char*)"unix";
+	case SCAP_FD_FIFO:
+		return (char*)"pipe";
+	case SCAP_FD_EVENT:
+		return (char*)"event";
+	case SCAP_FD_SIGNALFD:
+		return (char*)"signalfd";
+	case SCAP_FD_EVENTPOLL:
+		return (char*)"eventpoll";
+	case SCAP_FD_INOTIFY:
+		return (char*)"inotify";
+	case SCAP_FD_TIMERFD:
+		return (char*)"timerfd";
+	default:
+		return (char*)"<NA>";
+	}
+}
+
+template<> string sinsp_fdinfo_t::tostring_clean()
+{
+	string m_tstr = m_name;
+	m_tstr.erase(remove_if(m_tstr.begin(), m_tstr.end(), g_invalidchar()), m_tstr.end());
+	return m_tstr;
 }
 
 template<> void sinsp_fdinfo_t::add_filename(const char* fullpath)
@@ -202,6 +243,42 @@ template<> void sinsp_fdinfo_t::register_event_callback(sinsp_pd_callback_type e
 		break;
 	case CT_WRITE:
 		m_write_callbacks.push_back(dec);
+		break;
+	default:
+		ASSERT(false);
+		break;
+	}
+
+	return;
+}
+
+template<> void sinsp_fdinfo_t::unregister_event_callback(sinsp_pd_callback_type etype, sinsp_protodecoder* dec)
+{
+	vector<sinsp_protodecoder*>::iterator it;
+
+	switch(etype)
+	{
+	case CT_READ:
+		for(it = m_read_callbacks.begin(); it != m_read_callbacks.end(); ++it)
+		{
+			if(*it == dec)
+			{
+				m_read_callbacks.erase(it);
+				return;
+			}
+		}
+
+		break;
+	case CT_WRITE:
+		for(it = m_write_callbacks.begin(); it != m_write_callbacks.end(); ++it)
+		{
+			if(*it == dec)
+			{
+				m_write_callbacks.erase(it);
+				return;
+			}
+		}
+
 		break;
 	default:
 		ASSERT(false);
