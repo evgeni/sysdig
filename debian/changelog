@@ -1,3 +1,13 @@
+sysdig (0.1.87-1~bpo70+1) wheezy-backports; urgency=medium
+
+  * Rebuild for wheezy-backports.
+
+  [ Harlan Lieberman-Berg ]
+  * Drop pandoc B-D and ship the prebuilt manpage, as pandoc from
+    wheezy does not support GitHub markdown.
+
+ -- Evgeni Golov <evgeni@debian.org>  Fri, 15 Aug 2014 08:51:46 +0200
+
 sysdig (0.1.87-1) unstable; urgency=medium
 
   [ Evgeni Golov ]
