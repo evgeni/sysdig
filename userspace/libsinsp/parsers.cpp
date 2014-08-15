@@ -73,6 +73,7 @@ sinsp_parser::~sinsp_parser()
 void sinsp_parser::process_event(sinsp_evt *evt)
 {
 	uint16_t etype = evt->get_type();
+	bool is_live = m_inspector->is_live();
 
 	//
 	// Cleanup the event-related state
@@ -83,7 +84,7 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 	// When debug mode is not enabled, filter out events about sysdig itself
 	//
 #if defined(HAS_CAPTURE)
-	if(m_inspector->is_live() && !m_inspector->is_debug_enabled())
+	if(is_live && !m_inspector->is_debug_enabled())
 	{
 		if(evt->get_tid() == m_sysdig_pid && 
 			etype != PPME_SCHEDSWITCH_1_E && 
@@ -281,6 +282,19 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 		evt->m_filtered_out = false;
 	}
 #endif
+
+	//
+	// Offline captures can prodice events with the SCAP_DF_STATE_ONLY. They are
+	// supposed to go through the engine, but they must be filtered out before 
+	// reaching the user.
+	//
+	if(!is_live)
+	{
+		if(evt->get_dump_flags() & SCAP_DF_STATE_ONLY)
+		{
+			evt->m_filtered_out = true;
+		}
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -536,10 +550,10 @@ bool sinsp_parser::retrieve_enter_event(sinsp_evt *enter_evt, sinsp_evt *exit_ev
 	return true;
 }
 
-sinsp_protodecoder* sinsp_parser::require_protodecoder(string decoder_name)
+sinsp_protodecoder* sinsp_parser::add_protodecoder(string decoder_name)
 {
 	//
-	// Make sure this decoder has not been allocated yet
+	// Make sure this decoder is not present yet
 	//
 	vector<sinsp_protodecoder*>::iterator it;
 	for(it = m_protodecoders.begin(); it != m_protodecoders.end(); ++it)
@@ -588,6 +602,7 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	int64_t childtid;
 	unordered_map<int64_t, sinsp_threadinfo>::iterator it;
 	bool is_inverted_clone = false; // true if clone() in the child returns before the one in the parent
+	bool tid_collision = false;
 
 	//
 	// Validate the return value and get the child tid
@@ -673,7 +688,7 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	//
 	// Lookup the thread that called clone() so we can copy its information
 	//
-	sinsp_threadinfo* ptinfo = m_inspector->get_thread(tid, true);
+	sinsp_threadinfo* ptinfo = m_inspector->get_thread(tid, true, true);
 	if(NULL == ptinfo)
 	{
 		//
@@ -687,7 +702,7 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	//
 	// See if the child is already there
 	//
-	sinsp_threadinfo* child = m_inspector->get_thread(childtid, false);
+	sinsp_threadinfo* child = m_inspector->get_thread(childtid, false, true);
 	if(NULL != child)
 	{
 		//
@@ -703,7 +718,8 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 		else
 		{
 			ASSERT(false);
-			m_inspector->remove_thread(childtid);
+			m_inspector->remove_thread(childtid, true);
+			tid_collision = true;
 		}
 	}
 
@@ -863,6 +879,17 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	//
 	m_inspector->add_thread(tinfo);
 
+	//
+	// If we had to erase a previous entry for this tid and rebalance the table,
+	// make sure we reinitialize the tinfo pointer for this event, as the thread
+	// generating it might have gone away.
+	//
+	if(tid_collision)
+	{
+		evt->m_tinfo = NULL;
+		evt->m_tinfo = evt->get_thread_info();
+	}
+
 	return;
 }
 
@@ -990,7 +1017,7 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
 		}
 		else
 		{
-			m_inspector->m_thread_manager->increment_program_childcount(evt->m_tinfo);
+			m_inspector->m_thread_manager->increment_program_childcount(evt->m_tinfo, 0, 0);
 		}
 	}
 
@@ -1896,7 +1923,7 @@ bool sinsp_parser::set_unix_info(sinsp_fdinfo_t* fdinfo, uint8_t* packed_data)
 }
 
 
-// Return false if the update didn't happen (for example because the tuple is NULL
+// Return false if the update didn't happen (for example because the tuple is NULL)
 bool sinsp_parser::update_fd(sinsp_evt *evt, sinsp_evt_param *parinfo)
 {
 	uint8_t* packed_data = (uint8_t*)parinfo->m_val;
@@ -1945,6 +1972,28 @@ bool sinsp_parser::update_fd(sinsp_evt *evt, sinsp_evt_param *parinfo)
 			return false;
 		}
 	}
+	else if(family == PPM_AF_UNIX)
+	{
+		evt->m_fdinfo->m_type = SCAP_FD_UNIX_SOCK;
+		if(set_unix_info(evt->m_fdinfo, packed_data) == false)
+		{
+			return false;
+		}
+
+		evt->m_fdinfo->m_name = ((char*)packed_data) + 17;
+
+		//
+		// Call the protocol decoder callbacks to notify the decoders that this FD
+		// changed.
+		//
+		vector<sinsp_protodecoder*>::iterator it;
+		for(it = m_connect_callbacks.begin(); it != m_connect_callbacks.end(); ++it)
+		{
+			(*it)->on_event(evt, CT_TUPLE_CHANGE);
+		}
+
+		return true;
+	}
 
 	//
 	// If we reach this point and the protocol is not set yet, we assume this
@@ -1960,6 +2009,16 @@ bool sinsp_parser::update_fd(sinsp_evt *evt, sinsp_evt_param *parinfo)
 	// If this is an incomplete tuple, patch it using interface info
 	//
 	m_inspector->m_network_interfaces->update_fd(evt->m_fdinfo);
+
+	//
+	// Call the protocol decoder callbacks to notify the decoders that this FD
+	// changed.
+	//
+	vector<sinsp_protodecoder*>::iterator it;
+	for(it = m_connect_callbacks.begin(); it != m_connect_callbacks.end(); ++it)
+	{
+		(*it)->on_event(evt, CT_TUPLE_CHANGE);
+	}
 
 	return true;
 }
@@ -2106,8 +2165,7 @@ void sinsp_parser::parse_rw_exit(sinsp_evt *evt)
 				tupleparam = 2;
 			}
 
-//			if(tupleparam != -1 && (evt->m_fdinfo->m_name.length() == 0  || evt->m_fdinfo->is_udp_socket() || evt->m_fdinfo->is_unix_socket()))
-			if(tupleparam != -1 && (evt->m_fdinfo->m_name.length() == 0  || evt->m_fdinfo->is_udp_socket()))
+			if(tupleparam != -1 && (evt->m_fdinfo->m_name.length() == 0 || !evt->m_fdinfo->is_tcp_socket()))
 			{
 				//
 				// sendto contains tuple info in the enter event.
@@ -2622,7 +2680,7 @@ void sinsp_parser::parse_prlimit_exit(sinsp_evt *evt)
 				tid = *(int64_t *)parinfo->m_val;
 				ASSERT(parinfo->m_len == sizeof(int64_t));
 
-				sinsp_threadinfo* ptinfo = m_inspector->get_thread(tid, true);
+				sinsp_threadinfo* ptinfo = m_inspector->get_thread(tid, true, true);
 				if(ptinfo == NULL)
 				{
 					ASSERT(false);

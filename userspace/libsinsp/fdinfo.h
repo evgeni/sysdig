@@ -80,6 +80,18 @@ public:
 	char get_typechar();
 
 	/*!
+	  \brief Return an ASCII string that identifies the FD type.
+
+	  Can be on of 'file', 'directory', ipv4', 'ipv6', 'unix', 'pipe', 'event', 'signalfd', 'eventpoll', 'inotify', 'signalfd'.
+	*/
+	char* get_typestring();
+
+	/*!
+	  \brief Return the fd name, after removing unprintable or invalid characters from it.
+	*/
+	string tostring_clean();
+
+	/*!
 	  \brief Returns true if this is a unix socket.
 	*/
 	bool is_unix_socket()
@@ -152,6 +164,11 @@ public:
 	  \brief Used by protocol decoders to register callbacks related to this FD.
 	*/
 	void register_event_callback(sinsp_pd_callback_type etype, sinsp_protodecoder* dec);
+
+	/*!
+	  \brief Used by protocol decoders to unregister callbacks related to this FD.
+	*/
+	void unregister_event_callback(sinsp_pd_callback_type etype, sinsp_protodecoder* dec);
 
 	scap_fd_type m_type; ///< The fd type, e.g. file, directory, IPv4 socket...
 	uint32_t m_openflags; ///< If this FD is a file, the flags that were used when opening it. See the PPM_O_* definitions in driver/ppm_events_public.h.
@@ -263,6 +280,7 @@ private:
 	friend class sinsp_analyzer_fd_listener;
 	friend class sinsp_fdtable;
 	friend class sinsp_filter_check_fd;
+	friend class sinsp_filter_check_event;
 };
 
 /*@}*/

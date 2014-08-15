@@ -62,11 +62,17 @@ public:
 	virtual void on_event(sinsp_evt* evt, sinsp_pd_callback_type etype) = 0;
 	
 	//
-	// These have custom implementations for performance reasons
+	// These are not part of on_event for performance reasons
 	//
 	virtual void on_read(sinsp_evt* evt, char *data, uint32_t len);
 	virtual void on_write(sinsp_evt* evt, char *data, uint32_t len);
 	virtual void on_reset(sinsp_evt* evt);
+
+	//
+	// Used by the engine to retrieve the info line for the last event.
+	// Must return true if the line is valid.
+	//
+	virtual bool get_info_line(char** res) = 0;
 
 protected:
 	//
@@ -75,6 +81,9 @@ protected:
 	void register_event_callback(sinsp_pd_callback_type etype);
 	void register_read_callback(sinsp_fdinfo_t* fdinfo);
 	void register_write_callback(sinsp_fdinfo_t* fdinfo);
+
+	void unregister_read_callback(sinsp_fdinfo_t* fdinfo);
+	void unregister_write_callback(sinsp_fdinfo_t* fdinfo);
 
 	string m_name;
 	sinsp* m_inspector;
@@ -116,6 +125,7 @@ public:
 	void on_event(sinsp_evt* evt, sinsp_pd_callback_type etype);
 	void on_write(sinsp_evt* evt, char *data, uint32_t len);
 	void on_reset(sinsp_evt* evt);
+	bool get_info_line(char** res);
 
 	bool is_data_valid();
 
@@ -129,4 +139,5 @@ public:
 
 private:
 	void decode_message(char *data, uint32_t len, char* pristr, uint32_t pristrlen);
+	string m_infostr;
 };

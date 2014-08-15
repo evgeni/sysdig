@@ -172,6 +172,7 @@ void sinsp_threadinfo::init(const scap_threadinfo* pi)
 	m_vmswap_kb = pi->vmswap_kb;
 	m_pfmajor = pi->pfmajor;
 	m_pfminor = pi->pfminor;
+	m_nchilds = 0;
 
 	HASH_ITER(hh, pi->fdlist, fdi, tfdi)
 	{
@@ -182,6 +183,8 @@ void sinsp_threadinfo::init(const scap_threadinfo* pi)
 		newfdi.m_type = fdi->type;
 		newfdi.m_flags = sinsp_fdinfo_t::FLAGS_FROM_PROC;
 		newfdi.m_ino = fdi->ino;
+		newfdi.m_write_callbacks.clear();
+		newfdi.m_read_callbacks.clear();
 
 		switch(newfdi.m_type)
 		{
@@ -349,7 +352,7 @@ sinsp_threadinfo* sinsp_threadinfo::get_main_thread()
 			//
 			// Yes, this is a child thread. Find the process root thread.
 			//
-			sinsp_threadinfo *ptinfo = m_inspector->get_thread(m_pid, true);
+			sinsp_threadinfo *ptinfo = m_inspector->get_thread(m_pid, true, true);
 			if(NULL == ptinfo)
 			{
 				ASSERT(false);
@@ -365,7 +368,7 @@ sinsp_threadinfo* sinsp_threadinfo::get_main_thread()
 
 sinsp_threadinfo* sinsp_threadinfo::get_parent_thread()
 {
-	return m_inspector->get_thread(m_ptid, false);
+	return m_inspector->get_thread(m_ptid, false, true);
 }
 
 sinsp_fdtable* sinsp_threadinfo::get_fd_table()
@@ -433,8 +436,7 @@ bool sinsp_threadinfo::is_bound_to_port(uint16_t number)
 
 	sinsp_fdtable* fdt = get_fd_table();
 
-	for(it = fdt->m_table.begin(); 
-		it != fdt->m_table.end(); ++it)
+	for(it = fdt->m_table.begin(); it != fdt->m_table.end(); ++it)
 	{
 		if(it->second.m_type == SCAP_FD_IPV4_SOCK)
 		{
@@ -663,7 +665,7 @@ void sinsp_thread_manager::set_listener(sinsp_threadtable_listener* listener)
 	m_listener = listener;
 }
 
-sinsp_threadinfo* sinsp_thread_manager::get_thread(int64_t tid)
+sinsp_threadinfo* sinsp_thread_manager::get_thread(int64_t tid, bool lookup_only)
 {
 	threadinfo_map_iterator_t it;
 
@@ -689,9 +691,12 @@ sinsp_threadinfo* sinsp_thread_manager::get_thread(int64_t tid)
 #ifdef GATHER_INTERNAL_STATS
 		m_non_cached_lookups->increment();
 #endif
-		m_last_tid = tid;
-		m_last_tinfo = &(it->second);
-		m_last_tinfo->m_lastaccess_ts = m_inspector->m_lastevent_ts;
+		if(!lookup_only)
+		{
+			m_last_tid = tid;
+			m_last_tinfo = &(it->second);
+			m_last_tinfo->m_lastaccess_ts = m_inspector->m_lastevent_ts;
+		}
 		return &(it->second);
 	}
 	else
@@ -712,7 +717,8 @@ void sinsp_thread_manager::increment_mainthread_childcount(sinsp_threadinfo* thr
 		// be deleted (if it calls pthread_exit()) until we are done
 		//
 		ASSERT(threadinfo->m_pid != threadinfo->m_tid);
-		sinsp_threadinfo* main_thread = m_inspector->get_thread(threadinfo->m_pid, false);
+
+		sinsp_threadinfo* main_thread = m_inspector->get_thread(threadinfo->m_pid, true, true);
 		if(main_thread)
 		{
 			++main_thread->m_nchilds;
@@ -724,15 +730,15 @@ void sinsp_thread_manager::increment_mainthread_childcount(sinsp_threadinfo* thr
 	}
 }
 
-void sinsp_thread_manager::increment_program_childcount(sinsp_threadinfo* threadinfo)
+void sinsp_thread_manager::increment_program_childcount(sinsp_threadinfo* threadinfo, uint32_t level, uint32_t notclosed_level)
 {
 	if(threadinfo->is_main_thread())
 	{
-		sinsp_threadinfo* parent_thread = m_inspector->get_thread(threadinfo->m_ptid, false);
+		sinsp_threadinfo* parent_thread = m_inspector->get_thread(threadinfo->m_ptid, false, false);
 
 		if(parent_thread)
 		{
-			if(parent_thread->m_tid == threadinfo->m_tid)
+			if(parent_thread->m_tid == threadinfo->m_tid || level > 64)
 			{
 				return;
 			}
@@ -742,7 +748,13 @@ void sinsp_thread_manager::increment_program_childcount(sinsp_threadinfo* thread
 			{
 				threadinfo->m_progid = parent_thread->m_tid;
 				++parent_thread->m_nchilds;
-				increment_program_childcount(parent_thread);
+
+				if(!(threadinfo->m_flags & PPM_CL_CLOSED))
+				{
+					notclosed_level++;
+				}
+
+				increment_program_childcount(parent_thread, level + 1, notclosed_level);
 			}
 		}
 	}
@@ -755,7 +767,7 @@ void sinsp_thread_manager::decrement_program_childcount(sinsp_threadinfo* thread
 	{
 		ASSERT(threadinfo->m_pid != threadinfo->m_progid);
 
-		sinsp_threadinfo* prog_thread = m_inspector->get_thread(threadinfo->m_progid, false);
+		sinsp_threadinfo* prog_thread = m_inspector->get_thread(threadinfo->m_progid, false, true);
 
 		if(prog_thread)
 		{
@@ -763,6 +775,7 @@ void sinsp_thread_manager::decrement_program_childcount(sinsp_threadinfo* thread
 			{
 				--prog_thread->m_nchilds;
 				decrement_program_childcount(prog_thread, level + 1);
+				threadinfo->m_main_program_thread = NULL;
 			}
 			else
 			{
@@ -793,7 +806,7 @@ void sinsp_thread_manager::add_thread(sinsp_threadinfo& threadinfo, bool from_sc
 	if(!from_scap_proctable)
 	{
 		increment_mainthread_childcount(&threadinfo);
-		increment_program_childcount(&threadinfo);
+		increment_program_childcount(&threadinfo, 0, 0);
 	}
 
 	sinsp_threadinfo& newentry = (m_threadtable[threadinfo.m_tid] = threadinfo);
@@ -804,13 +817,15 @@ void sinsp_thread_manager::add_thread(sinsp_threadinfo& threadinfo, bool from_sc
 	}
 }
 
-void sinsp_thread_manager::remove_thread(int64_t tid)
+void sinsp_thread_manager::remove_thread(int64_t tid, bool force)
 {
-	remove_thread(m_threadtable.find(tid));
+	remove_thread(m_threadtable.find(tid), force);
 }
 
-void sinsp_thread_manager::remove_thread(threadinfo_map_iterator_t it)
+void sinsp_thread_manager::remove_thread(threadinfo_map_iterator_t it, bool force)
 {
+	uint64_t nchilds;
+
 	if(it == m_threadtable.end())
 	{
 		//
@@ -824,7 +839,7 @@ void sinsp_thread_manager::remove_thread(threadinfo_map_iterator_t it)
 #endif
 		return;
 	}
-	else if(it->second.m_nchilds == 0)
+	else if((nchilds = it->second.m_nchilds) == 0 || force)
 	{
 		//
 		// Decrement the refcount of the main thread/program because
@@ -833,11 +848,17 @@ void sinsp_thread_manager::remove_thread(threadinfo_map_iterator_t it)
 		if(it->second.m_flags & PPM_CL_CLONE_THREAD)
 		{
 			ASSERT(it->second.m_pid != it->second.m_tid);
-			sinsp_threadinfo* main_thread = m_inspector->get_thread(it->second.m_pid, false);
+			sinsp_threadinfo* main_thread = m_inspector->get_thread(it->second.m_pid, false, true);
 			if(main_thread)
 			{
-				ASSERT(main_thread->m_nchilds);
-				--main_thread->m_nchilds;
+				if(main_thread->m_nchilds > 0)
+				{
+					--main_thread->m_nchilds;
+				}
+				else
+				{
+					ASSERT(false);
+				}
 			}
 			else
 			{
@@ -889,6 +910,17 @@ void sinsp_thread_manager::remove_thread(threadinfo_map_iterator_t it)
 #endif
 
 		m_threadtable.erase(it);
+
+		//
+		// If the thread has a nonzero refcount, it means that we are forcing the removal
+		// of a main process or program that some childs refer to.
+		// We need to recalculate the child relationships, or the table will become 
+		// corrupted.
+		//
+		if(nchilds != 0)
+		{
+			recreate_child_dependencies();
+		}
 	}
 }
 
@@ -904,11 +936,17 @@ void sinsp_thread_manager::remove_inactive_threads()
 	{
 		m_last_flush_time_ns = m_inspector->m_lastevent_ts;
 
+		g_logger.format(sinsp_logger::SEV_INFO, "Flusing thread table");
+
+		//
+		// Go through the table and remove dead entries.
+		//
 		for(threadinfo_map_iterator_t it = m_threadtable.begin(); it != m_threadtable.end();)
 		{
-			if(it->second.m_nchilds == 0 &&
-				m_inspector->m_lastevent_ts > 
-				it->second.m_lastaccess_ts + m_inspector->m_thread_timeout_ns)
+			bool closed = (it->second.m_flags & PPM_CL_CLOSED) != 0;
+
+			if(closed || 
+				(m_inspector->m_lastevent_ts > it->second.m_lastaccess_ts + m_inspector->m_thread_timeout_ns))
 			{
 				//
 				// Reset the cache
@@ -919,26 +957,68 @@ void sinsp_thread_manager::remove_inactive_threads()
 #ifdef GATHER_INTERNAL_STATS
 				m_removed_threads->increment();
 #endif
-				m_threadtable.erase(it++);
+				remove_thread(it++, closed);
 			}
 			else
 			{
 				++it;
 			}
 		}
+
+		//
+		// Rebalance the thread table dependency tree, so we free up threads that
+		// exited but that are stuck because of reference counting.
+		//
+		recreate_child_dependencies();
 	}
 }
 
 void sinsp_thread_manager::fix_sockets_coming_from_proc()
 {
 	threadinfo_map_iterator_t it;
-	for(it = m_threadtable.begin(); 
-		it != m_threadtable.end(); ++it)
+
+	for(it = m_threadtable.begin(); it != m_threadtable.end(); ++it)
 	{
 		it->second.fix_sockets_coming_from_proc();
 	}
 }
 
+void sinsp_thread_manager::reset_child_dependencies()
+{
+	threadinfo_map_iterator_t it;
+
+	m_last_tinfo = NULL;
+	m_last_tid = 0;
+
+	for(it = m_threadtable.begin(); it != m_threadtable.end(); ++it)
+	{
+		it->second.m_nchilds = 0;
+		it->second.m_main_program_thread = NULL;
+		it->second.m_progid = -1LL;
+		sinsp_fdtable* fdt = it->second.get_fd_table();
+		if(fdt != NULL)
+		{
+			fdt->m_last_accessed_fd = -1LL;
+		}
+	}
+}
+
+void sinsp_thread_manager::create_child_dependencies()
+{
+	threadinfo_map_iterator_t it;
+
+	for(it = m_threadtable.begin(); it != m_threadtable.end(); ++it)
+	{
+		increment_mainthread_childcount(&it->second);
+		increment_program_childcount(&it->second, 0, 0);
+	}
+}
+
+void sinsp_thread_manager::recreate_child_dependencies()
+{
+	reset_child_dependencies();
+	create_child_dependencies();
+}
 
 void sinsp_thread_manager::update_statistics()
 {
