@@ -292,6 +292,8 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 		return SCAP_FAILURE;
 	}
 
+	memset(tinfo, 0, sizeof(scap_threadinfo));
+
 	tinfo->tid = tid;
 	if(parenttid != -1)
 	{

@@ -810,7 +810,9 @@ void sinsp_thread_manager::add_thread(sinsp_threadinfo& threadinfo, bool from_sc
 	}
 
 	sinsp_threadinfo& newentry = (m_threadtable[threadinfo.m_tid] = threadinfo);
+
 	newentry.allocate_private_state();
+
 	if(m_listener)
 	{
 		m_listener->on_thread_created(&newentry);
@@ -924,8 +926,10 @@ void sinsp_thread_manager::remove_thread(threadinfo_map_iterator_t it, bool forc
 	}
 }
 
-void sinsp_thread_manager::remove_inactive_threads()
+bool sinsp_thread_manager::remove_inactive_threads()
 {
+	bool res = false;
+
 	if(m_last_flush_time_ns == 0)
 	{
 		m_last_flush_time_ns = m_inspector->m_lastevent_ts;
@@ -934,6 +938,8 @@ void sinsp_thread_manager::remove_inactive_threads()
 	if(m_inspector->m_lastevent_ts > 
 		m_last_flush_time_ns + m_inspector->m_inactive_thread_scan_time_ns)
 	{
+		res = true;
+
 		m_last_flush_time_ns = m_inspector->m_lastevent_ts;
 
 		g_logger.format(sinsp_logger::SEV_INFO, "Flusing thread table");
@@ -971,6 +977,8 @@ void sinsp_thread_manager::remove_inactive_threads()
 		//
 		recreate_child_dependencies();
 	}
+
+	return res;
 }
 
 void sinsp_thread_manager::fix_sockets_coming_from_proc()
@@ -994,11 +1002,12 @@ void sinsp_thread_manager::reset_child_dependencies()
 	{
 		it->second.m_nchilds = 0;
 		it->second.m_main_program_thread = NULL;
+		it->second.m_main_thread = NULL;
 		it->second.m_progid = -1LL;
 		sinsp_fdtable* fdt = it->second.get_fd_table();
 		if(fdt != NULL)
 		{
-			fdt->m_last_accessed_fd = -1LL;
+			fdt->reset_cache();
 		}
 	}
 }
