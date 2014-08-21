@@ -1,3 +1,12 @@
+sysdig (0.1.88-1) unstable; urgency=medium
+
+  * New upstream release
+  * Drop process-the-scripts-directory-on-non-Linux-systems.patch,
+    it was applied upstream.
+  * d/watch: tighten the download URL to only release-tags
+
+ -- Evgeni Golov <evgeni@debian.org>  Thu, 21 Aug 2014 15:56:56 +0200
+
 sysdig (0.1.87-1) unstable; urgency=medium
 
   [ Evgeni Golov ]
