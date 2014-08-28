@@ -44,7 +44,7 @@ const filtercheck_field_info sinsp_filter_check_fd_fields[] =
 	{PT_IPV4ADDR, EPF_NONE, PF_NA, "fd.ip", "matches the ip address (client or server) of the fd."},
 	{PT_IPV4ADDR, EPF_NONE, PF_NA, "fd.cip", "client IP address."},
 	{PT_IPV4ADDR, EPF_NONE, PF_NA, "fd.sip", "server IP address."},
-	{PT_PORT, EPF_FILTER_ONLY, PF_DEC, "fd.port", "matches the port (client or server) of the fd."},
+	{PT_PORT, EPF_FILTER_ONLY, PF_DEC, "fd.port", "matches the port (either client or server) of the fd."},
 	{PT_PORT, EPF_NONE, PF_DEC, "fd.cport", "for TCP/UDP FDs, the client port."},
 	{PT_PORT, EPF_NONE, PF_DEC, "fd.sport", "for TCP/UDP FDs, server port."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "fd.l4proto", "the IP protocol of a socket. Can be 'tcp', 'udp', 'icmp' or 'raw'."},
@@ -60,6 +60,7 @@ sinsp_filter_check_fd::sinsp_filter_check_fd()
 	m_info.m_name = "fd";
 	m_info.m_fields = sinsp_filter_check_fd_fields;
 	m_info.m_nfiedls = sizeof(sinsp_filter_check_fd_fields) / sizeof(sinsp_filter_check_fd_fields[0]);
+	m_info.m_flags = filter_check_info::FL_WORKS_ON_THREAD_TABLE;
 }
 
 sinsp_filter_check* sinsp_filter_check_fd::allocate_new()
@@ -418,13 +419,12 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len)
 				return NULL;
 			}
 
-			scap_fd_type evt_type = m_fdinfo->m_type;
-
 			if(m_fdinfo->is_role_none())
 			{
 				return NULL;
 			}
 
+			scap_fd_type evt_type = m_fdinfo->m_type;
 			if(evt_type == SCAP_FD_IPV4_SOCK)
 			{
 				return (uint8_t*)&(m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_sip);
@@ -557,8 +557,21 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len)
 				return NULL;
 			}
 
-			m_tbool = 
-				m_inspector->get_ifaddr_list()->is_ipv4addr_in_local_machine(m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_dip);
+			if(m_fdinfo->m_type == SCAP_FD_IPV4_SERVSOCK || m_fdinfo->m_type == SCAP_FD_IPV6_SERVSOCK)
+			{
+				m_tbool = true;
+			}
+			else if(m_fdinfo->m_type == SCAP_FD_IPV4_SOCK)
+			{
+				m_tbool = 
+					m_inspector->get_ifaddr_list()->is_ipv4addr_in_local_machine(m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_dip);
+			}
+			else
+			{
+				m_tbool = false;
+			}
+
+
 			return (uint8_t*)&m_tbool;
 		}
 		break;
@@ -647,52 +660,81 @@ bool sinsp_filter_check_fd::compare_port(sinsp_evt *evt)
 
 	if(m_fdinfo != NULL)
 	{
+		uint16_t* sport;
+		uint16_t* dport;
 		scap_fd_type evt_type = m_fdinfo->m_type;
 
 		if(evt_type == SCAP_FD_IPV4_SOCK)
 		{
-			if(m_cmpop == CO_EQ)
-			{
-				if(m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_sport == *(uint16_t*)&m_val_storage[0] ||
-					m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_dport == *(uint16_t*)&m_val_storage[0])
-				{
-					return true;
-				}
-			}
-			else if(m_cmpop == CO_NE)
-			{
-				if(m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_sport != *(uint16_t*)&m_val_storage[0] &&
-					m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_dport != *(uint16_t*)&m_val_storage[0])
-				{
-					return true;
-				}
-			}
-			else
-			{
-				throw sinsp_exception("filter error: IP filter only supports '=' and '!=' operators");
-			}
+			sport = &m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_sport;
+			dport = &m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_dport;
 		}
 		else if(evt_type == SCAP_FD_IPV4_SERVSOCK)
 		{
-			if(m_fdinfo->m_sockinfo.m_ipv4serverinfo.m_port == *(uint16_t*)&m_val_storage[0])
-			{
-				return true;
-			}
+			sport = &m_fdinfo->m_sockinfo.m_ipv4serverinfo.m_port;
+			dport = &m_fdinfo->m_sockinfo.m_ipv4serverinfo.m_port;
 		}
 		else if(evt_type == SCAP_FD_IPV6_SOCK)
 		{
-			if(m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_sport == *(uint16_t*)&m_val_storage[0] ||
-				m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_dport == *(uint16_t*)&m_val_storage[0])
-			{
-				return true;
-			}
+			sport = &m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_sport;
+			dport = &m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_dport;
 		}
 		else if(evt_type == SCAP_FD_IPV6_SERVSOCK)
 		{
-			if(m_fdinfo->m_sockinfo.m_ipv6serverinfo.m_port == *(uint16_t*)&m_val_storage[0])
+			sport = &m_fdinfo->m_sockinfo.m_ipv6serverinfo.m_port;
+			dport = &m_fdinfo->m_sockinfo.m_ipv6serverinfo.m_port;
+		}
+		else
+		{
+			return false;
+		}
+
+		switch(m_cmpop)
+		{
+		case CO_EQ:
+			if(*sport == *(uint16_t*)&m_val_storage[0] ||
+				*dport == *(uint16_t*)&m_val_storage[0])
 			{
 				return true;
 			}
+			break;
+		case CO_NE:
+			if(*sport != *(uint16_t*)&m_val_storage[0] &&
+				*dport != *(uint16_t*)&m_val_storage[0])
+			{
+				return true;
+			}
+			break;
+		case CO_LT:
+			if(*sport < *(uint16_t*)&m_val_storage[0] ||
+				*dport < *(uint16_t*)&m_val_storage[0])
+			{
+				return true;
+			}
+			break;
+		case CO_LE:
+			if(*sport <= *(uint16_t*)&m_val_storage[0] ||
+				*dport <= *(uint16_t*)&m_val_storage[0])
+			{
+				return true;
+			}
+			break;
+		case CO_GT:
+			if(*sport > *(uint16_t*)&m_val_storage[0] ||
+				*dport > *(uint16_t*)&m_val_storage[0])
+			{
+				return true;
+			}
+			break;
+		case CO_GE:
+			if(*sport >= *(uint16_t*)&m_val_storage[0] ||
+				*dport >= *(uint16_t*)&m_val_storage[0])
+			{
+				return true;
+			}
+			break;
+		default:
+			throw sinsp_exception("filter error: unsupported port comparison operator");
 		}
 	}
 
@@ -806,6 +848,7 @@ sinsp_filter_check_thread::sinsp_filter_check_thread()
 	m_info.m_name = "process";
 	m_info.m_fields = sinsp_filter_check_thread_fields;
 	m_info.m_nfiedls = sizeof(sinsp_filter_check_thread_fields) / sizeof(sinsp_filter_check_thread_fields[0]);
+	m_info.m_flags = filter_check_info::FL_WORKS_ON_THREAD_TABLE;
 
 	m_u64val = 0;
 }
@@ -1404,6 +1447,9 @@ const filtercheck_field_info sinsp_filter_check_event_fields[] =
 	{PT_RELTIME, EPF_NONE, PF_DEC, "evt.latency", "delta between an exit event and the correspondent enter event."},
 	{PT_RELTIME, EPF_NONE, PF_DEC, "evt.latency.s", "integer part of the event latency delta."},
 	{PT_RELTIME, EPF_NONE, PF_10_PADDED_DEC, "evt.latency.ns", "fractional part of the event latency delta."},
+	{PT_RELTIME, EPF_NONE, PF_DEC, "evt.deltatime", "delta between this event and the previous event."},
+	{PT_RELTIME, EPF_NONE, PF_DEC, "evt.deltatime.s", "integer part of the delta between this event and the previous event."},
+	{PT_RELTIME, EPF_NONE, PF_10_PADDED_DEC, "evt.deltatime.ns", "fractional part of the delta between this event and the previous event."},
 	{PT_CHARBUF, EPF_PRINT_ONLY, PF_NA, "evt.dir", "event direction can be either '>' for enter events or '<' for exit events."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "evt.type", "For system call events, this is the name of the system call (e.g. 'open')."},
 	{PT_INT16, EPF_NONE, PF_DEC, "evt.cpu", "number of the CPU where this event happened."},
@@ -1432,6 +1478,7 @@ sinsp_filter_check_event::sinsp_filter_check_event()
 	m_info.m_name = "evt";
 	m_info.m_fields = sinsp_filter_check_event_fields;
 	m_info.m_nfiedls = sizeof(sinsp_filter_check_event_fields) / sizeof(sinsp_filter_check_event_fields[0]);
+	m_u64val = 0;
 }
 
 sinsp_filter_check* sinsp_filter_check_event::allocate_new()
@@ -1709,6 +1756,9 @@ Json::Value sinsp_filter_check_event::extract_as_js(sinsp_evt *evt, OUT uint32_t
 	case TYPE_LATENCY:
 	case TYPE_LATENCY_S:
 	case TYPE_LATENCY_NS:
+	case TYPE_DELTA:
+	case TYPE_DELTA_S:
+	case TYPE_DELTA_NS:
 		return (Json::Value::Int64)*(uint64_t*)extract(evt, len);
 	case TYPE_COUNT:
 		m_u32val = 1;
@@ -1825,6 +1875,37 @@ uint8_t* sinsp_filter_check_event::extract(sinsp_evt *evt, OUT uint32_t* len)
 			}
 
 			return (uint8_t*)&m_u64val;
+		}
+	case TYPE_DELTA:
+	case TYPE_DELTA_S:
+	case TYPE_DELTA_NS:
+		{
+			if(m_u64val == 0)
+			{
+				m_u64val = evt->get_ts();
+				m_tsdelta = 0;
+			}
+			else
+			{
+				uint64_t tts = evt->get_ts();
+				
+				if(m_field_id == TYPE_DELTA)
+				{
+					m_tsdelta = tts - m_u64val;
+				}
+				else if(m_field_id == TYPE_DELTA_S)
+				{
+					m_tsdelta = (tts - m_u64val) / ONE_SECOND_IN_NS;
+				}
+				else if(m_field_id == TYPE_DELTA_NS)
+				{
+					m_tsdelta = (tts - m_u64val) % ONE_SECOND_IN_NS;
+				}
+
+				m_u64val = tts;
+			}
+
+			return (uint8_t*)&m_tsdelta;
 		}
 	case TYPE_DIR:
 		if(PPME_IS_ENTER(evt->get_type()))
@@ -2236,6 +2317,7 @@ sinsp_filter_check_user::sinsp_filter_check_user()
 	m_info.m_name = "user";
 	m_info.m_fields = sinsp_filter_check_user_fields;
 	m_info.m_nfiedls = sizeof(sinsp_filter_check_user_fields) / sizeof(sinsp_filter_check_user_fields[0]);
+	m_info.m_flags = filter_check_info::FL_WORKS_ON_THREAD_TABLE;
 }
 
 sinsp_filter_check* sinsp_filter_check_user::allocate_new()
@@ -2309,6 +2391,7 @@ sinsp_filter_check_group::sinsp_filter_check_group()
 	m_info.m_name = "group";
 	m_info.m_fields = sinsp_filter_check_group_fields;
 	m_info.m_nfiedls = sizeof(sinsp_filter_check_group_fields) / sizeof(sinsp_filter_check_group_fields[0]);
+	m_info.m_flags = filter_check_info::FL_WORKS_ON_THREAD_TABLE;
 }
 
 sinsp_filter_check* sinsp_filter_check_group::allocate_new()

@@ -55,9 +55,17 @@ end
 Extends a string to newlen with spaces
 ]]--
 function extend_string(s, newlen)
-	local ccs = "                                                                                                                                                                       "
-	s = s .. string.sub(ccs, 0, newlen - string.len(s))
-	return s
+	if #s < newlen then
+		local ccs = "                                                                                                                                                                       "
+		s = s .. string.sub(ccs, 0, newlen - #s)
+		return s
+	else
+		if newlen > 0 then
+			return (string.sub(s, 0, newlen - 1) .. " ")
+		else
+			return ""
+		end
+	end
 end
 
 --[[ 
@@ -121,6 +129,7 @@ extract the top num entries from the table t, after sorting them based on the en
 ]]--
 function pairs_top_by_val(t, num, order)
 	local keys = {}
+
 	for k in pairs(t) do keys[#keys+1] = k end
 
 	table.sort(keys, function(a,b) return order(t, a, b) end)
@@ -195,7 +204,7 @@ function print_sorted_table(stable, ts_s, ts_ns, timedelta, viz_info)
 			end
 			
 			if viz_info.value_units == "none" then
-				print(extend_string(v, 10) .. keystr)
+				print(extend_string(tostring(v), 10) .. keystr)
 			elseif viz_info.value_units == "bytes" then
 				print(extend_string(format_bytes(v), 10) .. keystr)
 			elseif viz_info.value_units == "time" then

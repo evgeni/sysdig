@@ -165,8 +165,10 @@ static void usage()
 "                    Change the way event time is diplayed. Accepted values are\n"
 "                    h for human-readable string, a for absolute timestamp from\n"
 "                    epoch, r for relative time from the beginning of the\n"
-"                    capture, and d for delta between event enter and exit.\n"
+"                    capture, d for delta between event enter and exit, and\n"
+"                    D for delta from the previous event.\n"
 " -v, --verbose      Verbose output.\n"
+" --version          Print version number.\n"
 " -w <writefile>, --write=<writefile>\n"
 "                    Write the captured events to <writefile>.\n"
 #ifndef DISABLE_CGW
@@ -346,14 +348,22 @@ static void parse_chisel_args(sinsp_chisel* ch, sinsp* inspector, int optind, in
 						}
 					}
 
-					try
-					{
-						sinsp_filter df(inspector, testflt);
-					}
-					catch(...)
+					if(nargs == 1 && ch->get_lua_script_info()->m_args[0].m_type == "filter")
 					{
 						ch->set_args(args);
 						(*n_filterargs)++;
+					}
+					else
+					{
+						try
+						{
+							sinsp_filter df(inspector, testflt);
+						}
+						catch(...)
+						{
+							ch->set_args(args);
+							(*n_filterargs)++;
+						}
 					}
 				}
 			}
@@ -438,7 +448,13 @@ void handle_end_of_file(bool print_progress, sinsp_evt_formatter* formatter = NU
 	//
 	// Notify the chisels that we're exiting.
 	//
-	chisels_on_capture_end();
+	try
+	{
+		chisels_on_capture_end();
+	}
+	catch(...)
+	{
+	}
 }
 
 //
@@ -681,6 +697,7 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 		{"summary", no_argument, 0, 'S' },
 		{"timetype", required_argument, 0, 't' },
 		{"verbose", no_argument, 0, 'v' },
+		{"version", no_argument, 0, 0 },
 		{"writefile", required_argument, 0, 'w' },
 #ifndef DISABLE_CGW
 		{"limit", required_argument, 0, 'W' },
@@ -929,6 +946,16 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 					{
 						timefmt = "%evt.latency.s.%evt.latency.ns";
 					}
+					else if(tms == "D")
+					{
+						timefmt = "%evt.deltatime.s.%evt.deltatime.ns";
+					}
+					else
+					{
+						fprintf(stderr, "invalid modifier for flag -t\n");
+						delete inspector;
+						return sysdig_init_res(EXIT_FAILURE);
+					}
 				}
 				break;
 			case 'v':
@@ -957,7 +984,7 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 				{
 					fprintf(stderr, "you cannot specify more than one output format\n");
 					delete inspector;
-					return sysdig_init_res(EXIT_SUCCESS);
+					return sysdig_init_res(EXIT_FAILURE);
 				}
 
 				event_buffer_format = sinsp_evt::PF_HEX;
@@ -967,7 +994,7 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 				{
 					fprintf(stderr, "you cannot specify more than one output format\n");
 					delete inspector;
-					return sysdig_init_res(EXIT_SUCCESS);
+					return sysdig_init_res(EXIT_FAILURE);
 				}
 
 				event_buffer_format = sinsp_evt::PF_HEXASCII;
@@ -977,6 +1004,13 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 				break;
 			default:
 				break;
+			}
+
+			if(string(long_options[long_index].name) == "version")
+			{
+				printf("sysdig version %s\n", SYSDIG_VERSION);
+				delete inspector;
+				return sysdig_init_res(EXIT_SUCCESS);
 			}
 		}
 
@@ -1178,6 +1212,10 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 			inspector->close();
 
 		}
+	}
+	catch(sinsp_capture_interrupt_exception&)
+	{
+		handle_end_of_file(print_progress);
 	}
 	catch(sinsp_exception& e)
 	{

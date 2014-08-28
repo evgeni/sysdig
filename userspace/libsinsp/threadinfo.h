@@ -264,10 +264,11 @@ public:
 	//       and m_last_tinfo is not set.
 	//
 	sinsp_threadinfo* get_thread(int64_t tid, bool lookup_only);
-	void add_thread(sinsp_threadinfo& threadinfo, bool from_scap_proctable=false);
+	void add_thread(sinsp_threadinfo& threadinfo, bool from_scap_proctable);
 	void remove_thread(int64_t tid, bool force);
 	void remove_thread(threadinfo_map_iterator_t it, bool force);
-	void remove_inactive_threads();
+	// Returns true if the table is actually scanned
+	bool remove_inactive_threads();
 	void fix_sockets_coming_from_proc();
 	void reset_child_dependencies();
 	void create_child_dependencies();
