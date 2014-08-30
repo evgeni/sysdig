@@ -1,3 +1,9 @@
+sysdig (0.1.88-2) UNRELEASED; urgency=low
+
+  * Install zsh tab completion files as per Debian layout. (Closes: #758823)
+
+ -- Harlan Lieberman-Berg <H.LiebermanBerg@gmail.com>  Sat, 30 Aug 2014 14:16:00 -0700
+
 sysdig (0.1.88-1) unstable; urgency=medium
 
   * New upstream release

@@ -1,0 +1,12 @@
+Description: Install zsh completion as per Debian spec
+Author: Harlan Lieberman-Berg <H.LiebermanBerg@gmail.com>
+Forwarded: not-needed
+--- a/scripts/CMakeLists.txt
++++ b/scripts/CMakeLists.txt
+@@ -6,6 +6,3 @@
+ 
+ install(FILES completions/zsh/_sysdig
+ 	DESTINATION share/zsh/vendor-completions)
+-
+-install(FILES completions/zsh/_sysdig
+-	DESTINATION share/zsh/site-functions)
