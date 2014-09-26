@@ -1,8 +1,12 @@
-sysdig (0.1.88-2) UNRELEASED; urgency=low
+sysdig (0.1.89-1) unstable; urgency=low
 
+  [ Evgeni Golov ]
+  * New upstream release
+
+  [ Harlan Lieberman-Berg ]
   * Install zsh tab completion files as per Debian layout. (Closes: #758823)
 
- -- Harlan Lieberman-Berg <H.LiebermanBerg@gmail.com>  Sat, 30 Aug 2014 14:16:00 -0700
+ -- Evgeni Golov <evgeni@debian.org>  Fri, 26 Sep 2014 14:57:58 +0200
 
 sysdig (0.1.88-1) unstable; urgency=medium
 
