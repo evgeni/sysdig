@@ -186,8 +186,8 @@ const struct ppm_event_entry g_ppm_events[PPM_EVENT_MAX] = {
 	[PPME_SYSCALL_LSEEK_X] = {f_sys_single_x},
 	[PPME_SYSCALL_LLSEEK_E] = {f_sys_llseek_e},
 	[PPME_SYSCALL_LLSEEK_X] = {f_sys_single_x},
-	[PPME_SYSCALL_IOCTL_E] = {PPM_AUTOFILL, 2, APT_REG, {{0}, {1} } },
-	[PPME_SYSCALL_IOCTL_X] = {f_sys_single_x},
+	[PPME_SYSCALL_IOCTL_3_E] = {PPM_AUTOFILL, 3, APT_REG, {{0}, {1}, {2} } },
+	[PPME_SYSCALL_IOCTL_3_X] = {f_sys_single_x},
 	[PPME_SYSCALL_GETCWD_E] = {f_sys_empty},
 	[PPME_SYSCALL_GETCWD_X] = {PPM_AUTOFILL, 2, APT_REG, {{AF_ID_RETVAL}, {0} } },
 	[PPME_SYSCALL_CHDIR_E] = {f_sys_empty},
@@ -258,8 +258,8 @@ const struct ppm_event_entry g_ppm_events[PPM_EVENT_MAX] = {
 	[PPME_DROP_X] = {f_sched_drop},
 	[PPME_SYSCALL_FCNTL_E] = {f_sched_fcntl_e},
 	[PPME_SYSCALL_FCNTL_X] = {f_sys_single_x},
-	[PPME_SYSCALL_EXECVE_13_E] = {f_sys_empty},
-	[PPME_SYSCALL_EXECVE_13_X] = {f_proc_startupdate},
+	[PPME_SYSCALL_EXECVE_14_E] = {f_sys_empty},
+	[PPME_SYSCALL_EXECVE_14_X] = {f_proc_startupdate},
 	[PPME_CLONE_16_E] = {f_sys_empty},
 	[PPME_CLONE_16_X] = {f_proc_startupdate},
 	[PPME_SYSCALL_BRK_4_E] = {PPM_AUTOFILL, 1, APT_REG, {{0} } },
@@ -706,7 +706,6 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 	unsigned int args_len = 0;
 	struct mm_struct *mm = current->mm;
 	int64_t retval;
-	const char *argstr;
 	int ptid;
 	char *spwd;
 	long total_vm = 0;
@@ -752,7 +751,6 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 		 * The call failed. Return empty strings for exe and args
 		 */
 		*args->str_storage = 0;
-		argstr = "";
 	}
 
 	/*
@@ -856,10 +854,10 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 
-	/*
-	 * clone-only parameters
-	 */
 	if (args->event_type == PPME_CLONE_16_X) {
+		/*
+		 * clone-only parameters
+		 */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
 		uint64_t euid = from_kuid_munged(current_user_ns(), current_euid());
 		uint64_t egid = from_kgid_munged(current_user_ns(), current_egid());
@@ -889,6 +887,38 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 		 */
 		syscall_get_arguments(current, args->regs, 0, 1, &val);
 		res = val_to_ring(args, egid, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	} else if (args->event_type == PPME_SYSCALL_EXECVE_14_X) {
+		/*
+		 * execve-only parameters
+		 */
+		unsigned long env_len = 0;
+
+		if (likely(retval >= 0)) {
+			/*
+			 * Already checked for mm validity
+			 */
+			env_len = mm->env_end - mm->env_start;
+
+			if (env_len > PAGE_SIZE)
+				env_len = PAGE_SIZE;
+
+			if (unlikely(ppm_copy_from_user(args->str_storage, (const void __user *)mm->env_start, env_len)))
+				return PPM_FAILURE_INVALID_USER_MEMORY;
+
+			args->str_storage[env_len - 1] = 0;
+		} else {
+			/*
+			 * The call failed. Return empty strings for env as well
+			 */
+			*args->str_storage = 0;
+		}
+
+		/*
+		 * environ
+		 */
+		res = val_to_ring(args, (int64_t)(long)args->str_storage, env_len, false, 0);
 		if (unlikely(res != PPM_SUCCESS))
 			return res;
 	}
@@ -3126,26 +3156,39 @@ static int f_sched_fcntl_e(struct event_filler_arguments *args)
 static inline u16 ptrace_requests_to_scap(unsigned long req)
 {
 	switch (req) {
+#ifdef PTRACE_SINGLEBLOCK
 	case PTRACE_SINGLEBLOCK:
 		return PPM_PTRACE_SINGLEBLOCK;
+#endif
+#ifdef PTRACE_SYSEMU_SINGLESTEP
 	case PTRACE_SYSEMU_SINGLESTEP:
 		return PPM_PTRACE_SYSEMU_SINGLESTEP;
+#endif
+
+#ifdef PTRACE_SYSEMU
 	case PTRACE_SYSEMU:
 		return PPM_PTRACE_SYSEMU;
+#endif
 #ifdef PTRACE_ARCH_PRCTL
 	case PTRACE_ARCH_PRCTL:
 		return PPM_PTRACE_ARCH_PRCTL;
 #endif
+#ifdef PTRACE_SET_THREAD_AREA
 	case PTRACE_SET_THREAD_AREA:
 		return PPM_PTRACE_SET_THREAD_AREA;
+#endif
 	case PTRACE_GET_THREAD_AREA:
 		return PPM_PTRACE_GET_THREAD_AREA;
 	case PTRACE_OLDSETOPTIONS:
 		return PPM_PTRACE_OLDSETOPTIONS;
+#ifdef PTRACE_SETFPXREGS
 	case PTRACE_SETFPXREGS:
 		return PPM_PTRACE_SETFPXREGS;
+#endif
+#ifdef PTRACE_GETFPXREGS
 	case PTRACE_GETFPXREGS:
 		return PPM_PTRACE_GETFPXREGS;
+#endif
 	case PTRACE_SETFPREGS:
 		return PPM_PTRACE_SETFPREGS;
 	case PTRACE_GETFPREGS:
@@ -3438,8 +3481,10 @@ static u32 mmap_flags_to_scap(int flags)
 	if (flags & MAP_ANONYMOUS)
 		res |= PPM_MAP_ANONYMOUS;
 
+#ifdef MAP_32BIT
 	if (flags & MAP_32BIT)
 		res |= PPM_MAP_32BIT;
+#endif
 
 #ifdef MAP_RENAME
 	if (flags & MAP_RENAME)

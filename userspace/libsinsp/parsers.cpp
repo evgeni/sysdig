@@ -117,7 +117,10 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 			{
 				if(evt->m_tinfo != NULL)
 				{
-					evt->m_tinfo->m_lastevent_type = PPM_SC_MAX;
+					if(!(eflags & EF_SKIPPARSERESET || etype == PPME_SCHEDSWITCH_6_E))
+					{
+						evt->m_tinfo->m_lastevent_type = PPM_SC_MAX;
+					}
 				}
 
 				evt->m_filtered_out = true;
@@ -181,6 +184,7 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 		break;
 	case PPME_SYSCALL_EXECVE_8_X:
 	case PPME_SYSCALL_EXECVE_13_X:
+	case PPME_SYSCALL_EXECVE_14_X:
 		parse_execve_exit(evt);
 		break;
 	case PPME_PROCEXIT_E:
@@ -321,7 +325,7 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 	//
 	// Ignore scheduler events
 	//
-	if(etype >= PPME_SCHEDSWITCH_1_E && etype <= PPME_DROP_X)
+	if(eflags & EF_SKIPPARSERESET)
 	{
 		return false;
 	}
@@ -337,7 +341,6 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 	bool query_os;
 	if(etype == PPME_CLONE_11_X ||
 		etype == PPME_CLONE_16_X ||
-		etype == PPME_SCHEDSWITCH_1_E ||
 		etype == PPME_SCHEDSWITCH_6_E)
 	{
 		query_os = false;
@@ -349,8 +352,7 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 
 	evt->m_tinfo = evt->get_thread_info(query_os);
 
-	if(etype == PPME_SCHEDSWITCH_1_E ||
-		etype == PPME_SCHEDSWITCH_6_E)
+	if(etype == PPME_SCHEDSWITCH_6_E)
 	{
 		return false;
 	}
@@ -1016,7 +1018,8 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
 	ASSERT(parinfo->m_len == sizeof(int64_t));
 	evt->m_tinfo->m_fdlimit = *(int64_t *)parinfo->m_val;
 
-	if(evt->get_type() == PPME_SYSCALL_EXECVE_13_X)
+	if(evt->get_type() == PPME_SYSCALL_EXECVE_13_X ||
+		evt->get_type() == PPME_SYSCALL_EXECVE_14_X)
 	{
 		// Get the pgflt_maj
 		parinfo = evt->get_param(8);
@@ -1042,6 +1045,13 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
 		parinfo = evt->get_param(12);
 		ASSERT(parinfo->m_len == sizeof(uint32_t));
 		evt->m_tinfo->m_vmswap_kb = *(uint32_t *)parinfo->m_val;
+
+		if(evt->get_type() == PPME_SYSCALL_EXECVE_14_X)
+		{
+			// Get the environment
+			parinfo = evt->get_param(13);
+			evt->m_tinfo->set_env(parinfo->m_val, parinfo->m_len);
+		}
 	}
 
 	//

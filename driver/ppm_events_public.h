@@ -440,8 +440,8 @@ enum ppm_event_type {
 	PPME_SYSCALL_LSEEK_X = 87,
 	PPME_SYSCALL_LLSEEK_E = 88,
 	PPME_SYSCALL_LLSEEK_X = 89,
-	PPME_SYSCALL_IOCTL_E = 90,
-	PPME_SYSCALL_IOCTL_X = 91,
+	PPME_SYSCALL_IOCTL_2_E = 90,
+	PPME_SYSCALL_IOCTL_2_X = 91,
 	PPME_SYSCALL_GETCWD_E = 92,
 	PPME_SYSCALL_GETCWD_X = 93,
 	PPME_SYSCALL_CHDIR_E = 94,
@@ -520,7 +520,11 @@ enum ppm_event_type {
 	PPME_SYSCALL_SPLICE_X = 167,
 	PPME_SYSCALL_PTRACE_E = 168,
 	PPME_SYSCALL_PTRACE_X = 169,
-	PPM_EVENT_MAX = 170
+	PPME_SYSCALL_IOCTL_3_E = 170,
+	PPME_SYSCALL_IOCTL_3_X = 171,
+	PPME_SYSCALL_EXECVE_14_E = 172,
+	PPME_SYSCALL_EXECVE_14_X = 173,
+	PPM_EVENT_MAX = 174
 };
 /*@}*/
 
@@ -868,8 +872,9 @@ enum ppm_event_flags {
 	EF_READS_FROM_FD = (1 << 3), /* This event reads data from an FD. */
 	EF_WRITES_TO_FD = (1 << 4), /* This event writes data to an FD. */
 	EF_MODIFIES_STATE = (1 << 5), /* This event causes the machine state to change and should not be dropped by the filtering engine. */
-	EF_UNUSED = (1 << 6), /* This event is no */
+	EF_UNUSED = (1 << 6), /* This event is not used */
 	EF_WAITS = (1 << 7), /* This event reads data from an FD. */
+	EF_SKIPPARSERESET = (1 << 8), /* This event shouldn't pollute the parser lastevent state tracker. */
 };
 
 /*

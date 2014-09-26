@@ -84,6 +84,9 @@ OPTIONS
 
 **-A**, **--print-ascii**  
   Only print the text portion of data buffers, and echo end-of-lines. This is useful to only display human-readable data.
+
+**-b**, **--print-base64**
+  Print data buffers in base64. This is useful for encoding binary data that needs to be used over media designed to handle textual data (i.e., terminal or json).
     
 **-c** _chiselname_ _chiselargs_, **--chisel**=_chiselname_ _chiselargs_  
   run the specified chisel. If the chisel require arguments, they must be specified in the command line after the name.
@@ -104,7 +107,7 @@ OPTIONS
   Print this page
   
 **-j**, **--json**         
-  Emit output as json
+  Emit output as json, data buffer encoding will depend from the print format selected.
   
 **-i _chiselname_**, **--chisel-info=**_chiselname_  
   Get a longer description and the arguments associated with a chisel found in the -cl option list.
@@ -137,7 +140,7 @@ OPTIONS
   Capture the first _len_ bytes of each I/O buffer. By default, the first 80 bytes are captured. Use this option with caution, it can generate huge trace files.
 
 **-t** _timetype_, **--timetype**=_timetype_  
-  Change the way event time is diplayed. Accepted values are **h** for human-readable string, **a** for absolute timestamp from epoch, **r** for relative time from the beginning of the capture, **d** for delta between event enter and exit, and **D** for delta from the previous event.
+  Change the way event time is displayed. Accepted values are **h** for human-readable string, **a** for absolute timestamp from epoch, **r** for relative time from the beginning of the capture, **d** for delta between event enter and exit, and **D** for delta from the previous event.
    
 **-v**, **--verbose**  
   Verbose output.
