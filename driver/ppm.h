@@ -32,6 +32,8 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #define RW_SNAPLEN 80
 #define RW_SNAPLEN_EVENT 4096
 #define RW_MAX_SNAPLEN (256 * 1024 * 1024)
+#define DPI_LOOKAHED_SIZE 5
+
 /* Make sure to use a power of two constant for this */
 extern u32 g_snaplen;
 
@@ -42,6 +44,7 @@ enum syscall_flags {
 	UF_NONE = 0,
 	UF_USED = (1 << 0),
 	UF_NEVER_DROP = (1 << 1),
+	UF_ALWAYS_DROP = (1 << 2),
 };
 
 /*
@@ -79,3 +82,5 @@ extern const struct syscall_evt_pair g_syscall_table[];
 extern const struct ppm_event_info g_event_info[];
 extern const enum ppm_syscall_code g_syscall_code_routing_table[];
 extern u32 g_sampling_ratio;
+
+#define PPM_PORT_MYSQL 3306

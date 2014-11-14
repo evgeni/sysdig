@@ -31,6 +31,9 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #include <linux/fs_struct.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <asm/mman.h>
 
 #include "ppm_ringbuffer.h"
 #include "ppm_events_public.h"
@@ -62,6 +65,21 @@ static void memory_dump(char *p, size_t size)
 	for (j = 0; j < size; j += 8)
 		pr_info("%*ph\n", 8, &p[j]);
 }
+
+/*
+ * Globals
+ */
+u32 g_http_options_intval;
+u32 g_http_get_intval;
+u32 g_http_head_intval;
+u32 g_http_post_intval;
+u32 g_http_put_intval;
+u32 g_http_delete_intval;
+u32 g_http_trace_intval;
+u32 g_http_connect_intval;
+u32 g_http_resp_intval;
+
+extern bool g_do_dynamic_snaplen;
 
 /*
  * What this function does is basically a special memcpy
@@ -141,13 +159,136 @@ strncpy_end:
 	return res;
 }
 
+int32_t dpi_lookahead_init(void)
+{
+	g_http_options_intval = (*(u32*)HTTP_OPTIONS_STR);
+	g_http_get_intval = (*(u32*)HTTP_GET_STR);
+	g_http_head_intval = (*(u32*)HTTP_HEAD_STR);
+	g_http_post_intval = (*(u32*)HTTP_POST_STR);
+	g_http_put_intval = (*(u32*)HTTP_PUT_STR);
+	g_http_delete_intval = (*(u32*)HTTP_DELETE_STR);
+	g_http_trace_intval = (*(u32*)HTTP_TRACE_STR);
+	g_http_connect_intval = (*(u32*)HTTP_CONNECT_STR);
+	g_http_resp_intval = (*(u32*)HTTP_RESP_STR);
+
+	return PPM_SUCCESS;
+}
+
+inline u32 compute_snaplen(struct event_filler_arguments *args, u32 lookahead_size)
+{
+	u32 res = g_snaplen;
+	char* buf;
+	int err;
+	struct socket *sock;
+	sa_family_t family;
+	struct sockaddr_storage sock_address;
+	struct sockaddr_storage peer_address;
+	int sock_address_len;
+	int peer_address_len;
+	u16 sport, dport;
+
+/*
+	if (args->event_type == PPME_SYSCALL_WRITE_X) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0)
+		struct fd f = fdget(args->fd);
+
+		if (f.file && f.file->f_op) {
+			if (THIS_MODULE == f.file->f_op->owner) {
+				res = RW_SNAPLEN_EVENT;
+				fdput(f);
+				return res;
+			}
+
+			fdput(f);
+		}
+#else
+		struct file* file = fget(args->fd);
+		if (file && file->f_op) {
+			if (THIS_MODULE == file->f_op->owner) {
+				res = RW_SNAPLEN_EVENT;
+				fput(file);
+				return res;
+			}
+
+			fput(file);
+		}
+#endif
+	}
+*/
+	
+	if (!g_do_dynamic_snaplen) {
+		return res;
+	}
+
+	buf = args->buffer + args->arg_data_offset;
+
+	sock = sockfd_lookup(args->fd, &err);
+
+	if (sock) {
+
+		if (sock->sk) {
+			err = sock->ops->getname(sock, (struct sockaddr *)&sock_address, &sock_address_len, 0);
+
+			if (err == 0) {
+				err = sock->ops->getname(sock, (struct sockaddr *)&peer_address, &peer_address_len, 1);
+
+				if (err == 0) {
+					family = sock->sk->sk_family;
+
+					if (family == AF_INET) {
+						sport = ntohs(((struct sockaddr_in *) &sock_address)->sin_port);
+						dport = ntohs(((struct sockaddr_in *) &peer_address)->sin_port);
+					} else if (family == AF_INET6) {
+						sport = ntohs(((struct sockaddr_in6 *) &sock_address)->sin6_port);
+						dport = ntohs(((struct sockaddr_in6 *) &peer_address)->sin6_port);
+					} else {
+						sport = 0;
+						dport = 0;						
+					}
+
+					if (sport == PPM_PORT_MYSQL || dport == PPM_PORT_MYSQL) {
+						if (lookahead_size >= 5) {
+							if (buf[0] == 3 || buf[1] == 3 || buf[2] == 3 || buf[3] == 3 || buf[4] == 3) {
+								sockfd_put(sock);
+								return 2000;
+							} else if (buf[2] == 0 && buf[3] == 0){
+								sockfd_put(sock);
+								return 2000;
+							}
+						}
+					} else {
+						if (lookahead_size >= 5) {
+							if (*(u32*)buf == g_http_get_intval ||
+							        *(u32*)buf == g_http_post_intval ||
+							        *(u32*)buf == g_http_put_intval ||
+							        *(u32*)buf == g_http_delete_intval ||
+							        *(u32*)buf == g_http_trace_intval ||
+							        *(u32*)buf == g_http_connect_intval ||
+							        *(u32*)buf == g_http_options_intval ||
+							        ((*(u32*)buf == g_http_resp_intval) && (buf[4] == '/')))
+							{
+								sockfd_put(sock);
+								return 2000;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		sockfd_put(sock);
+	}
+
+	return res;
+}
+
 /*
  * NOTES:
  * - val_len is ignored for everything other than PT_BYTEBUF.
  * - fromuser is ignored for numeric types
  * - dyn_idx is ignored for everything other than PT_DYN
  */
-inline int val_to_ring(struct event_filler_arguments *args, uint64_t val, u16 val_len, bool fromuser, u8 dyn_idx)
+int val_to_ring(struct event_filler_arguments *args, uint64_t val, u16 val_len, bool fromuser, u8 dyn_idx)
 {
 	const struct ppm_param_info* param_info;
 	int len = -1;
@@ -232,6 +373,77 @@ inline int val_to_ring(struct event_filler_arguments *args, uint64_t val, u16 va
 
 		break;
 	case PT_BYTEBUF:
+		if (likely(val != 0)) {
+			if (fromuser) {
+				/*
+				 * Copy the lookahead portion of the buffer that we will use DPI-based 
+				 * snaplen calculation
+				 */
+				u32 dpi_lookahead_size = DPI_LOOKAHED_SIZE;
+
+				if (dpi_lookahead_size > val_len) {
+					dpi_lookahead_size = val_len;
+				}
+
+				if (unlikely(dpi_lookahead_size >= args->arg_data_size))
+					return PPM_FAILURE_BUFFER_FULL;
+
+				len = (int)ppm_copy_from_user(args->buffer + args->arg_data_offset,
+						(const void __user *)(unsigned long)val,
+						dpi_lookahead_size);
+
+				if (unlikely(len != 0))
+					return PPM_FAILURE_INVALID_USER_MEMORY;
+
+				/*
+				 * Check if there's more to copy
+				 */
+				if (likely((dpi_lookahead_size != val_len))) {
+					/*
+					 * Calculate the snaplen
+					 */
+					if (likely(args->enforce_snaplen)) {
+						u32 sl = g_snaplen;
+
+						sl = compute_snaplen(args, dpi_lookahead_size);
+
+						if (val_len > sl) {
+							val_len = sl;
+						}			
+					}
+
+					if (unlikely((val_len) >= args->arg_data_size)) {
+						val_len = args->arg_data_size;
+					}
+
+					if (val_len > dpi_lookahead_size) {
+						len = (int)ppm_copy_from_user(args->buffer + args->arg_data_offset + dpi_lookahead_size,
+								(const void __user *)(unsigned long)val + dpi_lookahead_size,
+								val_len - dpi_lookahead_size);
+
+						if (unlikely(len != 0))
+							return PPM_FAILURE_INVALID_USER_MEMORY;
+					}
+				}
+
+				len = val_len;
+			} else {
+				if (unlikely(val_len >= args->arg_data_size))
+					return PPM_FAILURE_BUFFER_FULL;
+
+				memcpy(args->buffer + args->arg_data_offset,
+					(void *)(unsigned long)val, val_len);
+
+				len = val_len;
+			}
+		} else {
+			/*
+			 * Handle NULL pointers
+			 */
+			len = 0;
+		}
+
+		break;
 	case PT_SOCKADDR:
 	case PT_SOCKTUPLE:
 	case PT_FDLIST:
@@ -674,18 +886,26 @@ u16 fd_to_socktuple(int fd,
 	case AF_INET:
 		if (!use_userdata) {
 			err = sock->ops->getname(sock, (struct sockaddr *)&peer_address, &peer_address_len, 1);
-			ASSERT(err == 0);
-
-			if (is_inbound) {
-				sip = ((struct sockaddr_in *) &peer_address)->sin_addr.s_addr;
-				sport = ntohs(((struct sockaddr_in *) &peer_address)->sin_port);
-				dip = ((struct sockaddr_in *) &sock_address)->sin_addr.s_addr;
-				dport = ntohs(((struct sockaddr_in *) &sock_address)->sin_port);
-			} else {
-				sip = ((struct sockaddr_in *) &sock_address)->sin_addr.s_addr;
-				sport = ntohs(((struct sockaddr_in *) &sock_address)->sin_port);
-				dip = ((struct sockaddr_in *) &peer_address)->sin_addr.s_addr;
-				dport = ntohs(((struct sockaddr_in *) &peer_address)->sin_port);
+			if(err == 0)
+			{
+				if (is_inbound) {
+					sip = ((struct sockaddr_in *) &peer_address)->sin_addr.s_addr;
+					sport = ntohs(((struct sockaddr_in *) &peer_address)->sin_port);
+					dip = ((struct sockaddr_in *) &sock_address)->sin_addr.s_addr;
+					dport = ntohs(((struct sockaddr_in *) &sock_address)->sin_port);
+				} else {
+					sip = ((struct sockaddr_in *) &sock_address)->sin_addr.s_addr;
+					sport = ntohs(((struct sockaddr_in *) &sock_address)->sin_port);
+					dip = ((struct sockaddr_in *) &peer_address)->sin_addr.s_addr;
+					dport = ntohs(((struct sockaddr_in *) &peer_address)->sin_port);
+				}
+			}
+			else
+			{
+				sip = 0;
+				sport = 0;
+				dip = 0;
+				dport = 0;				
 			}
 		} else {
 			/*
@@ -866,19 +1086,26 @@ int32_t parse_readv_writev_bufs(struct event_filler_arguments *args, const struc
 	const struct iovec *iov;
 	u32 copylen;
 	u32 j;
-	uint64_t size = 0;
+	u64 size = 0;
 	unsigned long bufsize;
 	char *targetbuf = args->str_storage;
+	u32 targetbuflen = STR_STORAGE_SIZE;
+	unsigned long val;
+	u32 notcopied_len;
+	u32 tocopy_len;
 
 	copylen = iovcnt * sizeof(struct iovec);
 
 	if (unlikely(copylen >= STR_STORAGE_SIZE))
 		return PPM_FAILURE_BUFFER_FULL;
 
-	if (unlikely(ppm_copy_from_user(targetbuf, iovsrc, copylen)))
+	if (unlikely(ppm_copy_from_user(args->str_storage, iovsrc, copylen)))
 		return PPM_FAILURE_INVALID_USER_MEMORY;
 
-	iov = (const struct iovec *)targetbuf;
+	iov = (const struct iovec *)(args->str_storage);
+
+	targetbuf += copylen;
+	targetbuflen -= copylen;
 
 	/*
 	 * Size
@@ -894,18 +1121,51 @@ int32_t parse_readv_writev_bufs(struct event_filler_arguments *args, const struc
 
 	/*
 	 * data
-	 * NOTE: for the moment, we limit our data copy to the first buffer.
-	 * We assume that in the vast majority of the cases g_snaplen is much smaller
-	 * than iov[0].iov_len, and therefore we don't bother complicvating the code.
 	 */
 	if (flags & PRB_FLAG_PUSH_DATA) {
 		if (retval > 0 && iovcnt > 0) {
-			bufsize = min_t(int64_t, retval, (int64_t)iov[0].iov_len);
+			/*
+			 * Retrieve the FD. It will be used for dynamic snaplen calculation.
+			 */
+			syscall_get_arguments(current, args->regs, 0, 1, &val);
+			args->fd = (int)val;
+
+			/*
+			 * Merge the buffers
+			 */
+			bufsize = 0;
+
+			for (j = 0; j < iovcnt; j++) {
+				tocopy_len = min(iov[j].iov_len, targetbuflen - bufsize - 1);
+
+				notcopied_len = (int)ppm_copy_from_user(targetbuf + bufsize,
+						iov[j].iov_base,
+						tocopy_len);
+
+				if (unlikely(notcopied_len != 0)) {
+					/*
+					 * This means we had a page fault. Skip this event.
+					 */
+					return PPM_FAILURE_INVALID_USER_MEMORY;
+				}
+
+				bufsize += tocopy_len;
+
+				if (tocopy_len != iov[j].iov_len) {
+					/*
+					 * No space left in the args->str_storage buffer.
+					 * Copy must stop here.
+					 */
+					break;
+				}
+			}
+
+			args->enforce_snaplen = true;
 
 			res = val_to_ring(args,
-				(unsigned long)iov[0].iov_base,
-				min(bufsize, (unsigned long)g_snaplen),
-				true,
+				(unsigned long)targetbuf,
+				bufsize,
+				false,
 				0);
 			if (unlikely(res != PPM_SUCCESS))
 				return res;

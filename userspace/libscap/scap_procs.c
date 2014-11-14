@@ -251,13 +251,13 @@ int32_t scap_proc_fill_flimit(uint64_t tid, struct scap_threadinfo* tinfo)
 //
 // Add a process to the list by parsing its entry under /proc
 //
-int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int tid_to_scan, char* procdirname, scap_fdinfo* sockets, scap_threadinfo** procinfo, char *error)
+int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int tid_to_scan, char* procdirname, scap_fdinfo** sockets, scap_threadinfo** procinfo, char *error)
 {
 	char dir_name[256];
 	char target_name[256];
 	int target_res;
 	char filename[252];
-	char line[SCAP_MAX_PATH_SIZE];
+	char line[SCAP_MAX_ENV_SIZE];
 	struct scap_threadinfo* tinfo;
 	int32_t uth_status = SCAP_SUCCESS;
 	FILE* f;
@@ -286,6 +286,8 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 		{
 			return SCAP_SUCCESS;
 		}
+
+		ASSERT(sizeof(line) >= SCAP_MAX_PATH_SIZE);
 
 		if(fgets(line, SCAP_MAX_PATH_SIZE, f) == NULL)
 		{
@@ -355,6 +357,8 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 	}
 	else
 	{
+		ASSERT(sizeof(line) >= SCAP_MAX_PATH_SIZE);
+
 		if(fgets(line, SCAP_MAX_PATH_SIZE, f) == NULL)
 		{
 			snprintf(error, SCAP_LASTERR_SIZE, "can't read from %s", filename);
@@ -382,7 +386,9 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 	}
 	else
 	{
-		filesize = fread(line, 1, sizeof(line), f);
+		ASSERT(sizeof(line) >= SCAP_MAX_PATH_SIZE);
+
+		filesize = fread(line, 1, SCAP_MAX_PATH_SIZE, f);
 		line[filesize - 1] = 0;
 
 		exe_len = strlen(line);
@@ -392,13 +398,13 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 		}
 
 		tinfo->args_len = filesize - exe_len;
-		if(tinfo->args_len > SCAP_MAX_PATH_SIZE)
+		if(tinfo->args_len > SCAP_MAX_ARGS_SIZE)
 		{
-			tinfo->args_len = SCAP_MAX_PATH_SIZE;
+			tinfo->args_len = SCAP_MAX_ARGS_SIZE;
 		}
 
 		memcpy(tinfo->args, line + exe_len, tinfo->args_len);
-		tinfo->args[SCAP_MAX_PATH_SIZE - 1] = 0;
+		tinfo->args[SCAP_MAX_ARGS_SIZE - 1] = 0;
 
 		fclose(f);
 	}
@@ -417,7 +423,9 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 	}
 	else
 	{
-		filesize = fread(line, 1, sizeof(line), f);
+		ASSERT(sizeof(line) >= SCAP_MAX_ENV_SIZE);
+
+		filesize = fread(line, 1, SCAP_MAX_ENV_SIZE, f);
 		line[filesize - 1] = 0;
 
 		tinfo->env_len = filesize;
@@ -463,7 +471,7 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 	}
 
 	//
-	// if tid_to_scan is set we assume is a runtime lookup so no
+	// if tid_to_scan is set we assume this is a runtime lookup so no
 	// need to use the table
 	//
 	if(tid_to_scan == -1)
@@ -519,13 +527,9 @@ int32_t scap_proc_scan_proc_dir(scap_t* handle, char* procdirname, int parenttid
 
 	if(-1 == parenttid)
 	{
-		if(scan_sockets)
+		if(!scan_sockets)
 		{
-			if(SCAP_FAILURE == scap_fd_read_sockets(handle, &sockets))
-			{
-				closedir(dir_p);
-				return SCAP_FAILURE;
-			}
+			sockets = (void*)-1;
 		}
 	}
 
@@ -575,7 +579,7 @@ int32_t scap_proc_scan_proc_dir(scap_t* handle, char* procdirname, int parenttid
 			//
 			// We have a process that needs to be explored
 			//
-			res = scap_proc_add_from_proc(handle, tid, parenttid, tid_to_scan, procdirname, sockets, procinfo, error);
+			res = scap_proc_add_from_proc(handle, tid, parenttid, tid_to_scan, procdirname, &sockets, procinfo, error);
 			if(res != SCAP_SUCCESS)
 			{
 				snprintf(error, SCAP_LASTERR_SIZE, "cannot add procs tid = %"PRIu64", parenttid = %"PRIi32", dirname = %s", tid, parenttid, procdirname);
@@ -614,7 +618,10 @@ int32_t scap_proc_scan_proc_dir(scap_t* handle, char* procdirname, int parenttid
 	}
 
 	closedir(dir_p);
-	scap_fd_free_table(handle, &sockets);
+	if(sockets != NULL && sockets != (void*)-1)
+	{
+		scap_fd_free_table(handle, &sockets);
+	}
 	return res;
 }
 

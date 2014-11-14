@@ -109,6 +109,8 @@ static int f_sys_ptrace_e(struct event_filler_arguments *args);
 static int f_sys_ptrace_x(struct event_filler_arguments *args);
 static int f_sys_mmap_e(struct event_filler_arguments *args);
 static int f_sys_brk_munmap_mmap_x(struct event_filler_arguments *args);
+static int f_sys_renameat_x(struct event_filler_arguments *args);
+static int f_sys_symlinkat_x(struct event_filler_arguments *args);
 
 /*
  * Note, this is not part of g_event_info because we want to share g_event_info with userland.
@@ -260,8 +262,8 @@ const struct ppm_event_entry g_ppm_events[PPM_EVENT_MAX] = {
 	[PPME_SYSCALL_FCNTL_X] = {f_sys_single_x},
 	[PPME_SYSCALL_EXECVE_14_E] = {f_sys_empty},
 	[PPME_SYSCALL_EXECVE_14_X] = {f_proc_startupdate},
-	[PPME_CLONE_16_E] = {f_sys_empty},
-	[PPME_CLONE_16_X] = {f_proc_startupdate},
+	[PPME_SYSCALL_CLONE_16_E] = {f_sys_empty},
+	[PPME_SYSCALL_CLONE_16_X] = {f_proc_startupdate},
 	[PPME_SYSCALL_BRK_4_E] = {PPM_AUTOFILL, 1, APT_REG, {{0} } },
 	[PPME_SYSCALL_BRK_4_X] = {f_sys_brk_munmap_mmap_x},
 	[PPME_SYSCALL_MMAP_E] = {f_sys_mmap_e},
@@ -274,6 +276,18 @@ const struct ppm_event_entry g_ppm_events[PPM_EVENT_MAX] = {
 	[PPME_SYSCALL_SPLICE_X] = {PPM_AUTOFILL, 1, APT_REG, {{AF_ID_RETVAL} } },
 	[PPME_SYSCALL_PTRACE_E] = {f_sys_ptrace_e},
 	[PPME_SYSCALL_PTRACE_X] = {f_sys_ptrace_x},
+	[PPME_SYSCALL_RENAME_E] = {f_sys_empty},
+	[PPME_SYSCALL_RENAME_X] = {PPM_AUTOFILL, 3, APT_REG, {{AF_ID_RETVAL}, {0}, {1} } },
+	[PPME_SYSCALL_RENAMEAT_E] = {f_sys_empty},
+	[PPME_SYSCALL_RENAMEAT_X] = {f_sys_renameat_x},
+	[PPME_SYSCALL_SYMLINK_E] = {f_sys_empty},
+	[PPME_SYSCALL_SYMLINK_X] = {PPM_AUTOFILL, 3, APT_REG, {{AF_ID_RETVAL}, {0}, {1} } },
+	[PPME_SYSCALL_SYMLINKAT_E] = {f_sys_empty},
+	[PPME_SYSCALL_SYMLINKAT_X] = {f_sys_symlinkat_x},
+	[PPME_SYSCALL_FORK_E] = {f_sys_empty},
+	[PPME_SYSCALL_VFORK_X] = {f_proc_startupdate},
+	[PPME_SYSCALL_VFORK_E] = {f_sys_empty},
+	[PPME_SYSCALL_VFORK_X] = {f_proc_startupdate},
 };
 
 /*
@@ -466,7 +480,12 @@ static int f_sys_read_x(struct event_filler_arguments *args)
 	int res;
 	int64_t retval;
 	unsigned long bufsize;
-	unsigned int snaplen;
+
+	/*
+	 * Retrieve the FD. It will be used for dynamic snaplen calculation.
+	 */
+	syscall_get_arguments(current, args->regs, 0, 1, &val);
+	args->fd = (int)val;
 
 	/*
 	 * res
@@ -496,33 +515,10 @@ static int f_sys_read_x(struct event_filler_arguments *args)
 	}
 
 	/*
-	 * Determine the snaplen by checking the fd type.
-	 * (note: not implemeted yet)
-	 */
-	snaplen = g_snaplen;
-#if 0
-	{
-		int fd;
-		int err, fput_needed;
-		struct socket *sock;
-
-		syscall_get_arguments(current, args->regs, 0, 1, &val);
-		fd = (int)val;
-
-		sock = ppm_sockfd_lookup_light(fd, &err, &fput_needed);
-		if (sock) {
-			snaplen = g_snaplen;
-			fput_light(sock->file, fput_needed);
-		} else {
-			snaplen = RW_SNAPLEN;
-		}
-	}
-#endif
-
-	/*
 	 * Copy the buffer
 	 */
-	res = val_to_ring(args, val, min_t(unsigned long, bufsize, (unsigned long)snaplen), true, 0);
+	args->enforce_snaplen = true;
+	res = val_to_ring(args, val, bufsize, true, 0);
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 
@@ -535,46 +531,12 @@ static int f_sys_write_x(struct event_filler_arguments *args)
 	int res;
 	int64_t retval;
 	unsigned long bufsize;
-	unsigned int snaplen;
 
 	/*
-	 * If the write event is directed to our sysdig-events device, we use a
-	 * bigger snaplen
+	 * Retrieve the FD. It will be used for dynamic snaplen calculation.
 	 */
-	snaplen = g_snaplen;
-
-	{
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0)
-		int fd;
-		struct fd f;
-
-		syscall_get_arguments(current, args->regs, 0, 1, &val);
-		fd = (int)val;
-
-		f = fdget(fd);
-
-		if (f.file && f.file->f_op) {
-			if (THIS_MODULE == f.file->f_op->owner)
-				snaplen = RW_SNAPLEN_EVENT;
-
-			fdput(f);
-		}
-#else
-		int fd;
-		struct file *file;
-
-		syscall_get_arguments(current, args->regs, 0, 1, &val);
-		fd = (int)val;
-
-		file = fget(fd);
-		if (file && file->f_op) {
-			if (THIS_MODULE == file->f_op->owner)
-				snaplen = RW_SNAPLEN_EVENT;
-
-			fput(file);
-		}
-#endif
-	}
+	syscall_get_arguments(current, args->regs, 0, 1, &val);
+	args->fd = (int)val;
 
 	/*
 	 * res
@@ -594,7 +556,8 @@ static int f_sys_write_x(struct event_filler_arguments *args)
 	 * Copy the buffer
 	 */
 	syscall_get_arguments(current, args->regs, 1, 1, &val);
-	res = val_to_ring(args, val, min_t(unsigned long, bufsize, (unsigned long)snaplen), true, 0);
+	args->enforce_snaplen = true;
+	res = val_to_ring(args, val, bufsize, true, 0);
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 
@@ -854,7 +817,9 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 
-	if (args->event_type == PPME_CLONE_16_X) {
+	if (args->event_type == PPME_SYSCALL_CLONE_16_X || 
+		args->event_type == PPME_SYSCALL_FORK_X ||
+		args->event_type == PPME_SYSCALL_VFORK_X) {
 		/*
 		 * clone-only parameters
 		 */
@@ -869,7 +834,11 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 		/*
 		 * flags
 		 */
-		syscall_get_arguments(current, args->regs, 0, 1, &val);
+		if (args->event_type == PPME_SYSCALL_CLONE_16_X) {
+			syscall_get_arguments(current, args->regs, 0, 1, &val);			
+		} else {
+			val = 0;
+		}
 		res = val_to_ring(args, (uint64_t)clone_flags_to_scap(val), 0, false, 0);
 		if (unlikely(res != PPM_SUCCESS))
 			return res;
@@ -877,7 +846,6 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 		/*
 		 * uid
 		 */
-		syscall_get_arguments(current, args->regs, 0, 1, &val);
 		res = val_to_ring(args, euid, 0, false, 0);
 		if (unlikely(res != PPM_SUCCESS))
 			return res;
@@ -885,7 +853,6 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 		/*
 		 * gid
 		 */
-		syscall_get_arguments(current, args->regs, 0, 1, &val);
 		res = val_to_ring(args, egid, 0, false, 0);
 		if (unlikely(res != PPM_SUCCESS))
 			return res;
@@ -1367,6 +1334,12 @@ static int f_sys_send_x(struct event_filler_arguments *args)
 	unsigned long bufsize;
 
 	/*
+	 * Retrieve the FD. It will be used for dynamic snaplen calculation.
+	 */
+	syscall_get_arguments(current, args->regs, 0, 1, &val);
+	args->fd = (int)val;
+
+	/*
 	 * res
 	 */
 	retval = (int64_t)(long)syscall_get_return_value(current, args->regs);
@@ -1397,7 +1370,8 @@ static int f_sys_send_x(struct event_filler_arguments *args)
 		bufsize = retval;
 	}
 
-	res = val_to_ring(args, val, min_t(unsigned long, bufsize, (unsigned long)g_snaplen), true, 0);
+	args->enforce_snaplen = true;
+	res = val_to_ring(args, val, bufsize, true, 0);
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 
@@ -1466,6 +1440,12 @@ static int f_sys_recv_x_common(struct event_filler_arguments *args, int64_t *ret
 	unsigned long bufsize;
 
 	/*
+	 * Retrieve the FD. It will be used for dynamic snaplen calculation.
+	 */
+	syscall_get_arguments(current, args->regs, 0, 1, &val);
+	args->fd = (int)val;
+
+	/*
 	 * res
 	 */
 	*retval = (int64_t)(long)syscall_get_return_value(current, args->regs);
@@ -1496,7 +1476,8 @@ static int f_sys_recv_x_common(struct event_filler_arguments *args, int64_t *ret
 		bufsize = *retval;
 	}
 
-	res = val_to_ring(args, val, min_t(unsigned long, bufsize, (unsigned long)g_snaplen), true, 0);
+	args->enforce_snaplen = true;
+	res = val_to_ring(args, val, bufsize, true, 0);
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 
@@ -2459,7 +2440,6 @@ static int f_sys_writev_e(struct event_filler_arguments *args)
 	int res;
 	const struct iovec __user *iov;
 	unsigned long iovcnt;
-	unsigned int snaplen;
 
 	/*
 	 * fd
@@ -2477,33 +2457,9 @@ static int f_sys_writev_e(struct event_filler_arguments *args)
 	syscall_get_arguments(current, args->regs, 2, 1, &iovcnt);
 
 	/*
-	 * Determine the snaplen by checking the fd type.
-	 * (note: not implemeted yet)
-	 */
-	snaplen = g_snaplen;
-#if 0
-	{
-		int fd;
-		int err, fput_needed;
-		struct socket *sock;
-
-		syscall_get_arguments(current, args->regs, 0, 1, &val);
-		fd = (int)val;
-
-		sock = ppm_sockfd_lookup_light(fd, &err, &fput_needed);
-		if (sock) {
-			snaplen = g_snaplen;
-			fput_light(sock->file, fput_needed);
-		} else {
-			snaplen = RW_SNAPLEN;
-		}
-	}
-#endif
-
-	/*
 	 * Copy the buffer
 	 */
-	res = parse_readv_writev_bufs(args, iov, iovcnt, snaplen, PRB_FLAG_PUSH_SIZE);
+	res = parse_readv_writev_bufs(args, iov, iovcnt, g_snaplen, PRB_FLAG_PUSH_SIZE);
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 
@@ -2517,7 +2473,6 @@ static int f_sys_writev_pwritev_x(struct event_filler_arguments *args)
 	int64_t retval;
 	const struct iovec __user *iov;
 	unsigned long iovcnt;
-	unsigned int snaplen;
 
 	/*
 	 * res
@@ -2535,33 +2490,9 @@ static int f_sys_writev_pwritev_x(struct event_filler_arguments *args)
 	syscall_get_arguments(current, args->regs, 2, 1, &iovcnt);
 
 	/*
-	 * Determine the snaplen by checking the fd type.
-	 * (note: not implemeted yet)
-	 */
-	snaplen = g_snaplen;
-#if 0
-	{
-		int fd;
-		int err, fput_needed;
-		struct socket *sock;
-
-		syscall_get_arguments(current, args->regs, 0, 1, &val);
-		fd = (int)val;
-
-		sock = ppm_sockfd_lookup_light(fd, &err, &fput_needed);
-		if (sock) {
-			snaplen = g_snaplen;
-			fput_light(sock->file, fput_needed);
-		} else {
-			snaplen = RW_SNAPLEN;
-		}
-	}
-#endif
-
-	/*
 	 * Copy the buffer
 	 */
-	res = parse_readv_writev_bufs(args, iov, iovcnt, snaplen, PRB_FLAG_PUSH_DATA);
+	res = parse_readv_writev_bufs(args, iov, iovcnt, g_snaplen, PRB_FLAG_PUSH_DATA);
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 
@@ -2649,7 +2580,6 @@ static int f_sys_pwritev_e(struct event_filler_arguments *args)
 #endif
 	const struct iovec __user *iov;
 	unsigned long iovcnt;
-	unsigned int snaplen;
 
 	/*
 	 * fd
@@ -2667,33 +2597,9 @@ static int f_sys_pwritev_e(struct event_filler_arguments *args)
 	syscall_get_arguments(current, args->regs, 2, 1, &iovcnt);
 
 	/*
-	 * Determine the snaplen by checking the fd type.
-	 * (note: not implemeted yet)
-	 */
-	snaplen = g_snaplen;
-#if 0
-	{
-		int fd;
-		int err, fput_needed;
-		struct socket *sock;
-
-		syscall_get_arguments(current, args->regs, 0, 1, &val);
-		fd = (int)val;
-
-		sock = ppm_sockfd_lookup_light(fd, &err, &fput_needed);
-		if (sock) {
-			snaplen = g_snaplen;
-			fput_light(sock->file, fput_needed);
-		} else {
-			snaplen = RW_SNAPLEN;
-		}
-	}
-#endif
-
-	/*
 	 * Copy the buffer
 	 */
-	res = parse_readv_writev_bufs(args, iov, iovcnt, snaplen, PRB_FLAG_PUSH_SIZE);
+	res = parse_readv_writev_bufs(args, iov, iovcnt, g_snaplen, PRB_FLAG_PUSH_SIZE);
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 
@@ -3573,6 +3479,102 @@ static int f_sys_mmap_e(struct event_filler_arguments *args)
 	 */
 	syscall_get_arguments(current, args->regs, 5, 1, &val);
 	res = val_to_ring(args, val, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	return add_sentinel(args);
+}
+
+static int f_sys_renameat_x(struct event_filler_arguments *args)
+{
+	unsigned long val;
+	int res;
+	int64_t retval;
+
+	retval = (int64_t)syscall_get_return_value(current, args->regs);
+	res = val_to_ring(args, retval, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * olddirfd
+	 */
+	syscall_get_arguments(current, args->regs, 0, 1, &val);
+
+	if (val == AT_FDCWD)
+		val = PPM_AT_FDCWD;
+
+	res = val_to_ring(args, val, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * oldpath
+	 */
+	syscall_get_arguments(current, args->regs, 1, 1, &val);
+	res = val_to_ring(args, val, 0, true, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * newdirfd
+	 */
+	syscall_get_arguments(current, args->regs, 2, 1, &val);
+
+	if (val == AT_FDCWD)
+		val = PPM_AT_FDCWD;
+
+	res = val_to_ring(args, val, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * newpath
+	 */
+	syscall_get_arguments(current, args->regs, 3, 1, &val);
+	res = val_to_ring(args, val, 0, true, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	return add_sentinel(args);
+}
+
+static int f_sys_symlinkat_x(struct event_filler_arguments *args)
+{
+	unsigned long val;
+	int res;
+	int64_t retval;
+
+	retval = (int64_t)syscall_get_return_value(current, args->regs);
+	res = val_to_ring(args, retval, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * oldpath
+	 */
+	syscall_get_arguments(current, args->regs, 0, 1, &val);
+	res = val_to_ring(args, val, 0, true, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * newdirfd
+	 */
+	syscall_get_arguments(current, args->regs, 1, 1, &val);
+
+	if (val == AT_FDCWD)
+		val = PPM_AT_FDCWD;
+
+	res = val_to_ring(args, val, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * newpath
+	 */
+	syscall_get_arguments(current, args->regs, 2, 1, &val);
+	res = val_to_ring(args, val, 0, true, 0);
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 

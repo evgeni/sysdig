@@ -91,6 +91,7 @@ typedef struct evt_param_info
 }evt_param_info;
 
 #define SCAP_MAX_PATH_SIZE 1024
+#define SCAP_MAX_ARGS_SIZE 4096
 #define SCAP_MAX_ENV_SIZE 4096
 
 /*!
@@ -188,7 +189,7 @@ typedef struct scap_threadinfo
 	uint64_t ptid; ///< The id of the thread that created this thread.
 	char comm[SCAP_MAX_PATH_SIZE]; ///< Command name (e.g. "top")
 	char exe[SCAP_MAX_PATH_SIZE]; ///< Full command name (e.g. "/bin/top")
-	char args[SCAP_MAX_PATH_SIZE]; ///< Command line arguments (e.g. "-d1")
+	char args[SCAP_MAX_ARGS_SIZE]; ///< Command line arguments (e.g. "-d1")
 	uint16_t args_len; ///< Command line arguments length
 	char env[SCAP_MAX_ENV_SIZE]; ///< Environment
 	uint16_t env_len; ///< Environment length
@@ -807,10 +808,11 @@ uint32_t scap_event_get_sentinel_begin(scap_evt* e);
 struct scap_threadinfo* scap_proc_get(scap_t* handle, int64_t tid, bool scan_sockets);
 
 void scap_proc_free(scap_t* handle, struct scap_threadinfo* procinfo);
-
 int32_t scap_stop_dropping_mode(scap_t* handle);
-
 int32_t scap_start_dropping_mode(scap_t* handle, uint32_t sampling_ratio);
+int32_t scap_enable_dynamic_snaplen(scap_t* handle);
+int32_t scap_disable_dynamic_snaplen(scap_t* handle);
+void scap_proc_free_table(scap_t* handle);
 
 #ifdef __cplusplus
 }

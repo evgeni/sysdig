@@ -316,7 +316,6 @@ void sinsp::import_thread_table()
 {
 	scap_threadinfo *pi;
 	scap_threadinfo *tpi;
-	sinsp_threadinfo newti(this);
 
 	scap_threadinfo *table = scap_get_proc_table(m_h);
 
@@ -325,6 +324,7 @@ void sinsp::import_thread_table()
 	//
 	HASH_ITER(hh, table, pi, tpi)
 	{
+		sinsp_threadinfo newti(this);
 		newti.init(pi);
 		m_thread_manager->add_thread(newti, true);
 	}
@@ -633,12 +633,12 @@ sinsp_threadinfo* sinsp::get_thread(int64_t tid, bool query_os_if_not_found, boo
 
 			if(m_n_proc_lookups == m_max_n_proc_socket_lookups)
 			{
-				g_logger.format(sinsp_logger::SEV_INFO, "Reached max socket lookup number");
+				g_logger.format(sinsp_logger::SEV_INFO, "Reached max socket lookup number, tid=%" PRIu64, tid);
 			}
 
 			if(m_n_proc_lookups == m_max_n_proc_lookups)
 			{
-				g_logger.format(sinsp_logger::SEV_INFO, "Reached max processs lookup number");
+				g_logger.format(sinsp_logger::SEV_INFO, "Reached max process lookup number");
 			}
 
 			if(m_max_n_proc_lookups == 0 || (m_max_n_proc_lookups != 0 &&
@@ -759,9 +759,12 @@ void sinsp::start_capture()
 
 void sinsp::stop_dropping_mode()
 {
-	if(scap_stop_dropping_mode(m_h) != SCAP_SUCCESS)
+	if(m_islive)
 	{
-		throw sinsp_exception(scap_getlasterr(m_h));
+		if(scap_stop_dropping_mode(m_h) != SCAP_SUCCESS)
+		{
+				throw sinsp_exception(scap_getlasterr(m_h));
+		}
 	}
 }
 
@@ -883,6 +886,11 @@ sinsp_stats sinsp::get_stats()
 void sinsp::set_log_callback(sinsp_logger_callback cb)
 {
 	g_logger.add_callback_log(cb);
+}
+
+void sinsp::set_min_log_severity(sinsp_logger::severity sev)
+{
+	g_logger.set_severity(sev);
 }
 
 sinsp_evttables* sinsp::get_event_info_tables()

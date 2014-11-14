@@ -88,10 +88,10 @@ static int ppm_open(struct inode *inode, struct file *filp);
 static int ppm_release(struct inode *inode, struct file *filp);
 static long ppm_ioctl(struct file *f, unsigned int cmd, unsigned long arg);
 static int ppm_mmap(struct file *filp, struct vm_area_struct *vma);
-static void record_event(enum ppm_event_type event_type,
+static int record_event(enum ppm_event_type event_type,
 	struct pt_regs *regs,
 	long id,
-	int never_drop,
+	enum syscall_flags drop_flags,
 	struct task_struct *sched_prev,
 	struct task_struct *sched_next);
 
@@ -140,10 +140,13 @@ static DEFINE_MUTEX(g_open_mutex);
 static u32 g_open_count;
 u32 g_snaplen = RW_SNAPLEN;
 u32 g_sampling_ratio = 1;
+bool g_do_dynamic_snaplen = false;
 static u32 g_sampling_interval;
 static int g_is_dropping;
 static int g_dropping_mode;
 static bool g_tracepoint_registered;
+static volatile int g_need_to_insert_drop_e = 0;
+static volatile int g_need_to_insert_drop_x = 0;
 
 struct cdev *g_ppe_cdev = NULL;
 struct device *g_ppe_dev = NULL;
@@ -422,7 +425,6 @@ static long ppm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		vpr_info("new snaplen: %d\n", g_snaplen);
 		return 0;
 	}
-
 	case PPM_IOCTL_MASK_ZERO_EVENTS:
 	{
 		vpr_info("PPM_IOCTL_MASK_ZERO_EVENTS\n");
@@ -434,7 +436,6 @@ static long ppm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		set_bit(PPME_DROP_X, g_events_mask);
 		return 0;
 	}
-
 	case PPM_IOCTL_MASK_SET_EVENT:
 	{
 		u32 syscall_to_set = (u32)arg;
@@ -449,7 +450,6 @@ static long ppm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		set_bit(syscall_to_set, g_events_mask);
 		return 0;
 	}
-
 	case PPM_IOCTL_MASK_UNSET_EVENT:
 	{
 		u32 syscall_to_unset = (u32)arg;
@@ -462,6 +462,16 @@ static long ppm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		}
 
 		clear_bit(syscall_to_unset, g_events_mask);
+		return 0;
+	}
+	case PPM_IOCTL_DISABLE_DYNAMIC_SNAPLEN:
+	{
+		g_do_dynamic_snaplen = false;
+		return 0;
+	}
+	case PPM_IOCTL_ENABLE_DYNAMIC_SNAPLEN:
+	{
+		g_do_dynamic_snaplen = true;
 		return 0;
 	}
 
@@ -692,23 +702,54 @@ static enum ppm_event_type parse_socketcall(struct event_filler_arguments *fille
 }
 #endif /* __NR_socketcall */
 
-static inline int drop_event(enum ppm_event_type event_type, int never_drop, struct timespec *ts)
+static inline void record_drop_e(void){
+	if (record_event(PPME_DROP_E, NULL, -1, UF_NEVER_DROP, NULL, NULL) == 0) {
+		g_need_to_insert_drop_e = 1;
+	} else {
+		if (g_need_to_insert_drop_e == 1) {
+			pr_err("drop enter event delayed insert\n");
+		}
+
+		g_need_to_insert_drop_e = 0;
+	}
+}
+
+static inline void record_drop_x(void){
+	if (record_event(PPME_DROP_X, NULL, -1, UF_NEVER_DROP, NULL, NULL) == 0) {
+		g_need_to_insert_drop_x = 1;
+	} else {
+		if (g_need_to_insert_drop_x == 1) {
+			pr_err("drop exit event delayed insert\n");
+		}
+
+		g_need_to_insert_drop_x = 0;
+	}
+}
+
+static inline int drop_event(enum ppm_event_type event_type, enum syscall_flags drop_flags, struct timespec *ts)
 {
-	if (never_drop)
+	if (drop_flags & UF_NEVER_DROP) {
+		ASSERT((drop_flags & UF_ALWAYS_DROP) == 0);
 		return 0;
+	}
 
 	if (g_dropping_mode) {
+		if (drop_flags & UF_ALWAYS_DROP) {
+			ASSERT((drop_flags & UF_NEVER_DROP) == 0);
+			return 1;
+		}
+	
 		if (ts->tv_nsec >= g_sampling_interval) {
 			if (g_is_dropping == 0) {
 				g_is_dropping = 1;
-				record_event(PPME_DROP_E, NULL, -1, 1, NULL, NULL);
+					record_drop_e();
 			}
 
 			return 1;
 		} else {
 			if (g_is_dropping == 1) {
 				g_is_dropping = 0;
-				record_event(PPME_DROP_X, NULL, -1, 1, NULL, NULL);
+					record_drop_x();
 			}
 		}
 	}
@@ -716,13 +757,17 @@ static inline int drop_event(enum ppm_event_type event_type, int never_drop, str
 	return 0;
 }
 
-static void record_event(enum ppm_event_type event_type,
+/*
+ * Returns 0 if the event is dropped
+ */
+static int record_event(enum ppm_event_type event_type,
 	struct pt_regs *regs,
 	long id,
-	int never_drop,
+	enum syscall_flags drop_flags,
 	struct task_struct *sched_prev,
 	struct task_struct *sched_next)
 {
+	int res = 0;
 	size_t event_size;
 	int next;
 	u32 freespace;
@@ -739,10 +784,18 @@ static void record_event(enum ppm_event_type event_type,
 	getnstimeofday(&ts);
 
 	if (!test_bit(event_type, g_events_mask))
-		return;
+		return res;
 
-	if (drop_event(event_type, never_drop, &ts))
-		return;
+	if (event_type != PPME_DROP_E && event_type != PPME_DROP_X) {
+		if (g_need_to_insert_drop_e == 1) {
+			record_drop_e();
+		} else if(g_need_to_insert_drop_x == 1) {
+			record_drop_x();
+		}
+
+		if (drop_event(event_type, drop_flags, &ts))
+			return res;
+	}
 
 	/*
 	 * FROM THIS MOMENT ON, WE HAVE TO BE SUPER FAST
@@ -752,7 +805,7 @@ static void record_event(enum ppm_event_type event_type,
 
 	if (!ring->capture_enabled) {
 		put_cpu_var(g_ring_buffers);
-		return;
+		return res;
 	}
 
 	ring_info->n_evts++;
@@ -771,7 +824,7 @@ static void record_event(enum ppm_event_type event_type,
 		put_cpu_var(g_ring_buffers);
 		ring_info->n_preemptions++;
 		ASSERT(false);
-		return;
+		return res;
 	}
 
 	/*
@@ -857,6 +910,7 @@ static void record_event(enum ppm_event_type event_type,
 		args.arg_data_size = args.buffer_size - args.arg_data_offset;
 		args.nevents = ring->nevents;
 		args.str_storage = ring->str_storage;
+		args.enforce_snaplen = false;
 
 		/*
 		 * Fire the filler callback
@@ -873,11 +927,14 @@ static void record_event(enum ppm_event_type event_type,
 			cbres = g_ppm_events[event_type].filler_callback(&args);
 		}
 
-		if (likely(cbres == PPM_SUCCESS)) {
+		if (likely(cbres == PPM_SUCCESS)) {			
 			/*
 			 * Validate that the filler added the right number of parameters
 			 */
 			if (likely(args.curarg == args.nargs)) {
+				/*
+				 * The event was successfully insterted in the buffer
+				 */
 				event_size = sizeof(struct ppm_evt_hdr) + args.arg_data_offset;
 				hdr->len = event_size;
 				drop = 0;
@@ -892,6 +949,8 @@ static void record_event(enum ppm_event_type event_type,
 	}
 
 	if (likely(!drop)) {
+		res = 1;
+
 		next = head + event_size;
 
 		if (unlikely(next >= RING_BUF_SIZE)) {
@@ -954,7 +1013,7 @@ static void record_event(enum ppm_event_type event_type,
 	atomic_dec(&ring->preempt_count);
 	put_cpu_var(g_ring_buffers);
 
-	return;
+	return res;
 }
 
 TRACEPOINT_PROBE(syscall_enter_probe, struct pt_regs *regs, long id)
@@ -974,12 +1033,12 @@ TRACEPOINT_PROBE(syscall_enter_probe, struct pt_regs *regs, long id)
 	table_index = id - SYSCALL_TABLE_ID0;
 	if (likely(table_index >= 0 && table_index < SYSCALL_TABLE_SIZE)) {
 		int used = g_syscall_table[table_index].flags & UF_USED;
-		int never_drop = g_syscall_table[table_index].flags & UF_NEVER_DROP;
+		enum syscall_flags drop_flags = g_syscall_table[table_index].flags;
 
 		if (used)
-			record_event(g_syscall_table[table_index].enter_event_type, regs, id, never_drop, NULL, NULL);
+			record_event(g_syscall_table[table_index].enter_event_type, regs, id, drop_flags, NULL, NULL);
 		else
-			record_event(PPME_GENERIC_E, regs, id, false, NULL, NULL);
+			record_event(PPME_GENERIC_E, regs, id, UF_ALWAYS_DROP, NULL, NULL);
 	}
 }
 
@@ -1003,12 +1062,12 @@ TRACEPOINT_PROBE(syscall_exit_probe, struct pt_regs *regs, long ret)
 	table_index = id - SYSCALL_TABLE_ID0;
 	if (likely(table_index >= 0 && table_index < SYSCALL_TABLE_SIZE)) {
 		int used = g_syscall_table[table_index].flags & UF_USED;
-		int never_drop = g_syscall_table[table_index].flags & UF_NEVER_DROP;
+		enum syscall_flags drop_flags = g_syscall_table[table_index].flags;
 
 		if (used)
-			record_event(g_syscall_table[table_index].exit_event_type, regs, id, never_drop, NULL, NULL);
+			record_event(g_syscall_table[table_index].exit_event_type, regs, id, drop_flags, NULL, NULL);
 		else
-			record_event(PPME_GENERIC_X, regs, id, false, NULL, NULL);
+			record_event(PPME_GENERIC_X, regs, id, UF_ALWAYS_DROP, NULL, NULL);
 	}
 }
 
@@ -1024,7 +1083,7 @@ TRACEPOINT_PROBE(syscall_procexit_probe, struct task_struct *p)
 		return;
 	}
 
-	record_event(PPME_PROCEXIT_E, NULL, -1, 1, NULL, NULL);
+	record_event(PPME_PROCEXIT_E, NULL, -1, UF_NEVER_DROP, NULL, NULL);
 }
 
 #include <linux/ip.h>
@@ -1041,7 +1100,7 @@ TRACEPOINT_PROBE(sched_switch_probe, struct task_struct *prev, struct task_struc
 	record_event(PPME_SCHEDSWITCH_6_E,
 		NULL,
 		-1,
-		0,
+		UF_USED,
 		prev,
 		next);
 }
@@ -1314,6 +1373,15 @@ int sysdig_init(void)
 
 	if (IS_ERR(g_ppe_dev)) {
 		pr_err("error creating the device for  %s\n", PPE_DEVICE_NAME);
+		ret = -EFAULT;
+		goto init_module_err;
+	}
+
+	/*
+	 * Snaplen lookahead initialization
+	 */
+	if (dpi_lookahead_init() != PPM_SUCCESS) {
+		pr_err("initializing lookahead-based snaplen  %s\n", PPE_DEVICE_NAME);
 		ret = -EFAULT;
 		goto init_module_err;
 	}

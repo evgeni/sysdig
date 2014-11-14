@@ -1,5 +1,5 @@
 --[[
-netlower.lua - trace the syscalls slower than a given threshold.
+netlower.lua - trace network I/O slower than a given threshold.
 
 USAGE: sysdig -c netlower min_ms
    eg, 
@@ -36,9 +36,11 @@ args =
     },
 }
 
+require "common"
+
 -- Argument notification callback
 function on_set_arg(name, val)
-	min_ms = tonumber(val)
+	min_ms = parse_numeric_input(val, name)
 	return true
 end
 

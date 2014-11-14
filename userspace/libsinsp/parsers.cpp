@@ -89,6 +89,8 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 		if(evt->get_tid() == m_sysdig_pid && 
 			etype != PPME_SCHEDSWITCH_1_E && 
 			etype != PPME_SCHEDSWITCH_6_E &&
+			etype != PPME_DROP_E &&
+			etype != PPME_DROP_X &&
 			m_sysdig_pid)
 		{
 			evt->m_filtered_out = true;
@@ -178,8 +180,10 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 	case PPME_SYSCALL_EPOLLWAIT_E:
 		parse_select_poll_epollwait_enter(evt);
 		break;
-	case PPME_CLONE_11_X:
-	case PPME_CLONE_16_X:
+	case PPME_SYSCALL_CLONE_11_X:
+	case PPME_SYSCALL_CLONE_16_X:
+	case PPME_SYSCALL_FORK_X:
+	case PPME_SYSCALL_VFORK_X:
 		parse_clone_exit(evt);
 		break;
 	case PPME_SYSCALL_EXECVE_8_X:
@@ -264,6 +268,7 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 	case PPME_SYSCALL_MMAP2_X:
 	case PPME_SYSCALL_MUNMAP_X:
 		parse_brk_munmap_mmap_exit(evt);
+		break;
 	default:
 		break;
 	}
@@ -327,6 +332,7 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 	//
 	if(eflags & EF_SKIPPARSERESET)
 	{
+		evt->m_tinfo = NULL;
 		return false;
 	}
 
@@ -339,8 +345,10 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 	// (many kernel thread), we don't look for /proc
 	//
 	bool query_os;
-	if(etype == PPME_CLONE_11_X ||
-		etype == PPME_CLONE_16_X ||
+	if(etype == PPME_SYSCALL_CLONE_11_X ||
+		etype == PPME_SYSCALL_CLONE_16_X ||
+		etype == PPME_SYSCALL_FORK_X ||
+		etype == PPME_SYSCALL_VFORK_X ||
 		etype == PPME_SCHEDSWITCH_6_E)
 	{
 		query_os = false;
@@ -359,8 +367,10 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 
 	if(!evt->m_tinfo)
 	{
-		if(etype == PPME_CLONE_11_X ||
-			etype == PPME_CLONE_16_X)
+		if(etype == PPME_SYSCALL_CLONE_11_X ||
+			etype == PPME_SYSCALL_CLONE_16_X ||
+			etype == PPME_SYSCALL_FORK_X ||
+			etype == PPME_SYSCALL_VFORK_X)
 		{
 #ifdef GATHER_INTERNAL_STATS
 			m_inspector->m_thread_manager->m_failed_lookups->decrement();
@@ -606,6 +616,7 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	bool is_inverted_clone = false; // true if clone() in the child returns before the one in the parent
 	bool tid_collision = false;
 	bool valid_parent = true;
+	uint16_t etype = evt->get_type();
 
 	//
 	// Validate the return value and get the child tid
@@ -647,10 +658,12 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 			//
 			switch(evt->get_type())
 			{
-				case PPME_CLONE_11_X:
+				case PPME_SYSCALL_CLONE_11_X:
 					parinfo = evt->get_param(8);
 					break;
-				case PPME_CLONE_16_X:
+				case PPME_SYSCALL_CLONE_16_X:
+				case PPME_SYSCALL_FORK_X:
+				case PPME_SYSCALL_VFORK_X:
 					parinfo = evt->get_param(13);
 					break;
 				default:
@@ -811,12 +824,14 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	tinfo.m_pid = *(int64_t *)parinfo->m_val;
 
 	// Get the flags, and check if this is a thread or a new thread
-	switch(evt->get_type())
+	switch(etype)
 	{
-		case PPME_CLONE_11_X:
+		case PPME_SYSCALL_CLONE_11_X:
 			parinfo = evt->get_param(8);
 			break;
-		case PPME_CLONE_16_X:
+		case PPME_SYSCALL_CLONE_16_X:
+		case PPME_SYSCALL_FORK_X:
+		case PPME_SYSCALL_VFORK_X:
 			parinfo = evt->get_param(13);
 			break;
 		default:
@@ -871,7 +886,7 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	ASSERT(parinfo->m_len == sizeof(int64_t));
 	tinfo.m_fdlimit = *(int64_t *)parinfo->m_val;
 
-	if(evt->get_type() == PPME_CLONE_16_X)
+	if(etype == PPME_SYSCALL_CLONE_16_X || etype == PPME_SYSCALL_FORK_X || etype == PPME_SYSCALL_VFORK_X)
 	{
 		// Get the pgflt_maj
 		parinfo = evt->get_param(8);
@@ -900,12 +915,14 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	}
 
 	// Copy the uid
-	switch(evt->get_type())
+	switch(etype)
 	{
-		case PPME_CLONE_11_X:
+		case PPME_SYSCALL_CLONE_11_X:
 			parinfo = evt->get_param(9);
 			break;
-		case PPME_CLONE_16_X:
+		case PPME_SYSCALL_CLONE_16_X:
+		case PPME_SYSCALL_FORK_X:
+		case PPME_SYSCALL_VFORK_X:
 			parinfo = evt->get_param(14);
 			break;
 		default:
@@ -915,12 +932,14 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	tinfo.m_uid = *(int32_t *)parinfo->m_val;
 
 	// Copy the uid
-	switch(evt->get_type())
+	switch(etype)
 	{
-		case PPME_CLONE_11_X:
+		case PPME_SYSCALL_CLONE_11_X:
 			parinfo = evt->get_param(10);
 			break;
-		case PPME_CLONE_16_X:
+		case PPME_SYSCALL_CLONE_16_X:
+		case PPME_SYSCALL_FORK_X:
+		case PPME_SYSCALL_VFORK_X:
 			parinfo = evt->get_param(15);
 			break;
 		default:
@@ -959,6 +978,7 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
 {
 	sinsp_evt_param *parinfo;
 	int64_t retval;
+	uint16_t etype = evt->get_type();
 
 	// Validate the return value
 	parinfo = evt->get_param(0);
@@ -1018,8 +1038,8 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
 	ASSERT(parinfo->m_len == sizeof(int64_t));
 	evt->m_tinfo->m_fdlimit = *(int64_t *)parinfo->m_val;
 
-	if(evt->get_type() == PPME_SYSCALL_EXECVE_13_X ||
-		evt->get_type() == PPME_SYSCALL_EXECVE_14_X)
+	if(etype == PPME_SYSCALL_EXECVE_13_X ||
+		etype == PPME_SYSCALL_EXECVE_14_X)
 	{
 		// Get the pgflt_maj
 		parinfo = evt->get_param(8);
@@ -1046,7 +1066,7 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
 		ASSERT(parinfo->m_len == sizeof(uint32_t));
 		evt->m_tinfo->m_vmswap_kb = *(uint32_t *)parinfo->m_val;
 
-		if(evt->get_type() == PPME_SYSCALL_EXECVE_14_X)
+		if(etype == PPME_SYSCALL_EXECVE_14_X)
 		{
 			// Get the environment
 			parinfo = evt->get_param(13);
@@ -1077,19 +1097,9 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
 	evt->m_tinfo->m_flags |= PPM_CL_NAME_CHANGED;
 
 	//
-	// execve potentially breaks the program chain, and so we need to reflect it in our parents program count.
+	// Recompute the program hash
 	//
-	if((prev_comm != evt->m_tinfo->m_comm) || (prev_exe != evt->m_tinfo->m_exe))
-	{
-		if(evt->m_tinfo->m_progid != -1LL)
-		{
-			m_inspector->m_thread_manager->decrement_program_childcount(evt->m_tinfo);
-		}
-		else
-		{
-			m_inspector->m_thread_manager->increment_program_childcount(evt->m_tinfo, 0, 0);
-		}
-	}
+	evt->m_tinfo->compute_program_hash();
 
 #ifdef HAS_ANALYZER
 	evt->m_tinfo->m_ainfo->clear_role_flags();
@@ -1668,7 +1678,6 @@ void sinsp_parser::parse_accept_exit(sinsp_evt *evt)
 	// Add the entry to the table
 	//
 	evt->m_fdinfo = evt->m_tinfo->add_fd(fd, &fdi);
-	ASSERT(evt->m_fdinfo != NULL);
 }
 
 void sinsp_parser::parse_close_enter(sinsp_evt *evt)
@@ -1763,8 +1772,6 @@ void sinsp_parser::parse_close_exit(sinsp_evt *evt)
 			eparams.m_fd = evt->m_tinfo->m_lastevent_fd;
 			eparams.m_fdinfo = evt->m_fdinfo;
 		}
-
-		//m_inspector->push_fdop(tid, evt->m_fdinfo, sinsp_fdop(fd, evt->get_type()));
 
 		//
 		// Remove the fd from the different tables
@@ -2216,12 +2223,14 @@ void sinsp_parser::parse_rw_exit(sinsp_evt *evt)
 			//
 			// Call the protocol decoder callbacks associated to this event
 			//
-			vector<sinsp_protodecoder*>* cbacks = &(evt->m_fdinfo->m_read_callbacks);
-
-			vector<sinsp_protodecoder*>::iterator it;
-			for(it = cbacks->begin(); it != cbacks->end(); ++it)
+			if(evt->m_fdinfo->m_callbaks)
 			{
-				(*it)->on_read(evt, data, datalen);
+				vector<sinsp_protodecoder*>* cbacks = &(evt->m_fdinfo->m_callbaks->m_read_callbacks);
+
+				for(auto it = cbacks->begin(); it != cbacks->end(); ++it)
+				{
+					(*it)->on_read(evt, data, datalen);
+				}
 			}
 		}
 		else
@@ -2299,12 +2308,14 @@ void sinsp_parser::parse_rw_exit(sinsp_evt *evt)
 			//
 			// Call the protocol decoder callbacks associated to this event
 			//
-			vector<sinsp_protodecoder*>* cbacks = &(evt->m_fdinfo->m_write_callbacks);
-
-			vector<sinsp_protodecoder*>::iterator it;
-			for(it = cbacks->begin(); it != cbacks->end(); ++it)
+			if(evt->m_fdinfo->m_callbaks)
 			{
-				(*it)->on_write(evt, data, datalen);
+				vector<sinsp_protodecoder*>* cbacks = &(evt->m_fdinfo->m_callbaks->m_write_callbacks);
+
+				for(auto it = cbacks->begin(); it != cbacks->end(); ++it)
+				{
+					(*it)->on_write(evt, data, datalen);
+				}
 			}
 		}
 	}
@@ -2526,9 +2537,26 @@ void sinsp_parser::parse_dup_exit(sinsp_evt *evt)
 		}
 
 		//
+		// If the old FD is in the table, remove it properly
+		//
+		sinsp_fdinfo_t* oldfdinfo = evt->m_tinfo->get_fd(retval);
+
+		if(oldfdinfo != NULL)
+		{
+			erase_fd_params eparams;
+
+			eparams.m_fd = retval;
+			eparams.m_fdinfo = oldfdinfo;
+			eparams.m_remove_from_table = false;
+			eparams.m_inspector = m_inspector;
+			eparams.m_tinfo = evt->m_tinfo;
+			eparams.m_ts = evt->get_ts();
+
+			erase_fd(&eparams);
+		}
+
+		//
 		// Add the new fd to the table.
-		// NOTE: dup2 and dup3 accept an existing FD and in that case they close it.
-		//       For us it's ok to just overwrite it.
 		//
 		evt->m_fdinfo = evt->m_tinfo->add_fd(retval, evt->m_fdinfo);
 	}

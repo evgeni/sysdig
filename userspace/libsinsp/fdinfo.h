@@ -57,6 +57,13 @@ typedef union _sinsp_sockinfo
 	unix_tuple m_unixinfo; ///< The tuple if this a unix socket.
 }sinsp_sockinfo;
 
+class fd_callbacks_info
+{
+public:
+	vector<sinsp_protodecoder*> m_write_callbacks;
+	vector<sinsp_protodecoder*> m_read_callbacks;
+};
+
 /*!
   \brief File Descriptor information class.
   This class contains the full state for a FD, and a bunch of functions to
@@ -70,7 +77,54 @@ class SINSP_PUBLIC sinsp_fdinfo
 {
 public:
 	sinsp_fdinfo();
+	sinsp_fdinfo (const sinsp_fdinfo &other) 
+	{
+		copy(other);
+	}
+
+	~sinsp_fdinfo()
+	{
+		if(m_callbaks != NULL)
+		{
+			delete m_callbaks;
+		}
+
+		if(m_usrstate)
+		{
+			delete m_usrstate;
+		}
+	}
+
 	string* tostring();
+
+	inline void copy(const sinsp_fdinfo &other)
+	{
+		m_type = other.m_type;
+		m_openflags = other.m_openflags;	
+		m_sockinfo = other.m_sockinfo;
+		m_name = other.m_name;
+		m_flags = other.m_flags;
+		m_ino = other.m_ino;
+		
+		if(other.m_callbaks != NULL)
+		{
+			m_callbaks = new fd_callbacks_info();
+			*m_callbaks = *other.m_callbaks;
+		}
+		else
+		{
+			m_callbaks = NULL;
+		}
+
+		if(other.m_usrstate != NULL)
+		{
+			m_usrstate = new T(*other.m_usrstate);
+		}
+		else
+		{
+			m_usrstate = NULL;
+		}
+	}
 
 	/*!
 	  \brief Return a single ASCII character that identifies the FD type.
@@ -155,6 +209,22 @@ public:
 		return m_type == SCAP_FD_DIRECTORY;
 	}
 
+	uint16_t get_serverport()
+	{
+		if(m_type == SCAP_FD_IPV4_SOCK)
+		{
+			return m_sockinfo.m_ipv4info.m_fields.m_dport;
+		}
+		else if(m_type == SCAP_FD_IPV4_SOCK)
+		{
+			return m_sockinfo.m_ipv6info.m_fields.m_dport;
+		}
+		else
+		{
+			return 0;
+		}
+	}
+
 	/*!
 	  \brief If this is a socket, returns the IP protocol. Otherwise, return SCAP_FD_UNKNOWN.
 	*/
@@ -170,6 +240,30 @@ public:
 	*/
 	void unregister_event_callback(sinsp_pd_callback_type etype, sinsp_protodecoder* dec);
 
+	/*!
+	  \brief Return true if this FD is a socket server
+	*/
+	inline bool is_role_server()
+	{
+		return (m_flags & FLAGS_ROLE_SERVER) == FLAGS_ROLE_SERVER;
+	}
+
+	/*!
+	  \brief Return true if this FD is a socket client
+	*/
+	inline bool is_role_client()
+	{
+		return (m_flags & FLAGS_ROLE_CLIENT) == FLAGS_ROLE_CLIENT;
+	}
+
+	/*!
+	  \brief Return true if this FD is neither a client nor a server
+	*/
+	inline bool is_role_none()
+	{
+		return (m_flags & (FLAGS_ROLE_CLIENT | FLAGS_ROLE_SERVER)) == 0;
+	}
+
 	scap_fd_type m_type; ///< The fd type, e.g. file, directory, IPv4 socket...
 	uint32_t m_openflags; ///< If this FD is a file, the flags that were used when opening it. See the PPM_O_* definitions in driver/ppm_events_public.h.
 	
@@ -180,6 +274,11 @@ public:
 	sinsp_sockinfo m_sockinfo;
 
 	string m_name; ///< Human readable rendering of this FD. For files, this is the full file name. For sockets, this is the tuple. And so on.
+
+	inline bool has_decoder_callbacks()
+	{
+		return (m_callbaks != NULL);
+	}
 
 VISIBILITY_PRIVATE
 
@@ -195,7 +294,7 @@ private:
 	{
 		FLAGS_NONE = 0,
 		FLAGS_FROM_PROC = (1 << 0),
-		FLAGS_TRANSACTION = (1 << 1),
+		//FLAGS_TRANSACTION = (1 << 1),
 		FLAGS_ROLE_CLIENT = (1 << 2),
 		FLAGS_ROLE_SERVER = (1 << 3),
 		FLAGS_CLOSE_IN_PROGRESS = (1 << 4),
@@ -206,37 +305,17 @@ private:
 
 	void add_filename(const char* fullpath);
 
-	bool is_role_server()
+	inline bool is_transaction()
 	{
-		return (m_flags & FLAGS_ROLE_SERVER) == FLAGS_ROLE_SERVER;
+		return (m_usrstate != NULL); 
 	}
 
-	bool is_role_client()
-	{
-		return (m_flags & FLAGS_ROLE_CLIENT) == FLAGS_ROLE_CLIENT;
-	}
-
-	bool is_role_none()
-	{
-		return (m_flags & (FLAGS_ROLE_CLIENT | FLAGS_ROLE_SERVER)) == 0;
-	}
-
-	bool is_transaction()
-	{
-		return (m_flags & FLAGS_TRANSACTION) == FLAGS_TRANSACTION; 
-	}
-
-	void set_is_transaction()
-	{
-		m_flags |= FLAGS_TRANSACTION;
-	}
-
-	void set_role_server()
+	inline void set_role_server()
 	{
 		m_flags |= FLAGS_ROLE_SERVER;
 	}
 
-	void set_role_client()
+	inline void set_role_client()
 	{
 		m_flags |= FLAGS_ROLE_CLIENT;
 	}
@@ -246,32 +325,31 @@ private:
 		sinsp_fdinfo_t* pfdinfo,
 		bool incoming);
 
-	void reset_flags()
+	inline void reset_flags()
 	{
 		m_flags = FLAGS_NONE;
 	}
 
-	void set_socketpipe()
+	inline void set_socketpipe()
 	{
 		m_flags |= FLAGS_IS_SOCKET_PIPE;
 	}
 
-	bool is_socketpipe()
+	inline bool is_socketpipe()
 	{
 		return (m_flags & FLAGS_IS_SOCKET_PIPE) == FLAGS_IS_SOCKET_PIPE; 
 	}
 
-	bool has_no_role()
+	inline bool has_no_role()
 	{
 		return !is_role_client() && !is_role_server();
 	}
 
-	T m_usrstate;
+	T* m_usrstate;
 	uint32_t m_flags;
 	uint64_t m_ino;
 
-	vector<sinsp_protodecoder*> m_write_callbacks;
-	vector<sinsp_protodecoder*> m_read_callbacks;
+	fd_callbacks_info* m_callbaks;
 
 	friend class sinsp_parser;
 	friend class sinsp_threadinfo;
@@ -282,6 +360,7 @@ private:
 	friend class sinsp_filter_check_fd;
 	friend class sinsp_filter_check_event;
 	friend class lua_cbacks;
+	friend class sinsp_proto_detector;
 };
 
 /*@}*/
