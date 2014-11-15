@@ -1,3 +1,10 @@
+sysdig (0.1.92-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Standards-Version: 3.9.6 (no changes needed).
+
+ -- Evgeni Golov <evgeni@debian.org>  Fri, 14 Nov 2014 18:01:21 +0100
+
 sysdig (0.1.89-1) unstable; urgency=low
 
   [ Evgeni Golov ]
