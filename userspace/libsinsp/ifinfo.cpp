@@ -103,11 +103,33 @@ void sinsp_network_interfaces::update_fd(sinsp_fdinfo_t *fd)
 	}
 	if(0 == pipv4info->m_fields.m_sip)
 	{
-		pipv4info->m_fields.m_sip = infer_ipv4_address(pipv4info->m_fields.m_dip);
+		uint32_t newaddr;
+		newaddr = infer_ipv4_address(pipv4info->m_fields.m_dip);
+
+		if(newaddr == pipv4info->m_fields.m_dip)
+		{
+			if(pipv4info->m_fields.m_sport == pipv4info->m_fields.m_dport)
+			{
+				return;
+			}
+		}
+
+		pipv4info->m_fields.m_sip = newaddr;
 	}
 	else
 	{
-		pipv4info->m_fields.m_dip = infer_ipv4_address(pipv4info->m_fields.m_sip);
+		uint32_t newaddr;
+		newaddr = infer_ipv4_address(pipv4info->m_fields.m_sip);
+
+		if(newaddr == pipv4info->m_fields.m_sip)
+		{
+			if(pipv4info->m_fields.m_sport == pipv4info->m_fields.m_dport)
+			{
+				return;
+			}
+		}
+
+		pipv4info->m_fields.m_dip = newaddr;
 	}
 }
 
@@ -141,7 +163,7 @@ bool sinsp_network_interfaces::is_ipv4addr_in_local_machine(uint32_t addr)
 {
 	vector<sinsp_ipv4_ifinfo>::iterator it;
 
-	// try to find an interface for the same subnet
+	// try to find an interface that has the given IP as address
 	for(it = m_ipv4_interfaces.begin(); it != m_ipv4_interfaces.end(); it++)
 	{
 		if(it->m_addr == addr)
@@ -151,11 +173,6 @@ bool sinsp_network_interfaces::is_ipv4addr_in_local_machine(uint32_t addr)
 	}
 
 	return false;
-}
-
-void sinsp_network_interfaces::import_ipv4_interface(const sinsp_ipv4_ifinfo& ifinfo)
-{
-	m_ipv4_interfaces.push_back(ifinfo);
 }
 
 void sinsp_network_interfaces::import_ipv4_ifaddr_list(uint32_t count, scap_ifinfo_ipv4* plist)
@@ -203,6 +220,11 @@ void sinsp_network_interfaces::import_interfaces(scap_addrlist* paddrlist)
 		import_ipv4_ifaddr_list(paddrlist->n_v4_addrs, paddrlist->v4list);
 		import_ipv6_ifaddr_list(paddrlist->n_v6_addrs, paddrlist->v6list);
 	}
+}
+
+void sinsp_network_interfaces::import_ipv4_interface(const sinsp_ipv4_ifinfo& ifinfo)
+{
+	m_ipv4_interfaces.push_back(ifinfo);
 }
 
 vector<sinsp_ipv4_ifinfo>* sinsp_network_interfaces::get_ipv4_list()

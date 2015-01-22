@@ -16,10 +16,8 @@ You should have received a copy of the GNU General Public License
 along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <fcntl.h>
 #ifdef _WIN32
+#define NOMINMAX
 #include <winsock2.h>
 #else
 #include <sys/socket.h>
@@ -28,6 +26,11 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #endif // _DEBUG
 #include <unistd.h>
 #endif // _WIN32
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <limits>
 
 #include "sinsp.h"
 #include "sinsp_int.h"
@@ -72,8 +75,8 @@ sinsp_parser::~sinsp_parser()
 ///////////////////////////////////////////////////////////////////////////////
 void sinsp_parser::process_event(sinsp_evt *evt)
 {
-	uint16_t etype = evt->get_type();
-	bool is_live = m_inspector->is_live();
+	uint16_t etype = evt->m_pevt->type;
+	bool is_live = m_inspector->m_islive;
 
 	//
 	// Cleanup the event-related state
@@ -91,6 +94,7 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 			etype != PPME_SCHEDSWITCH_6_E &&
 			etype != PPME_DROP_E &&
 			etype != PPME_DROP_X &&
+			etype != PPME_SYSDIGEVENT_E &&
 			m_sysdig_pid)
 		{
 			evt->m_filtered_out = true;
@@ -152,6 +156,11 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 	case PPME_SYSCALL_PRLIMIT_E:
 	case PPME_SOCKET_SENDTO_E:
 	case PPME_SOCKET_SENDMSG_E:
+	case PPME_SYSCALL_SENDFILE_E:
+	case PPME_SYSCALL_SETRESUID_E:
+	case PPME_SYSCALL_SETRESGID_E:
+	case PPME_SYSCALL_SETUID_E:
+	case PPME_SYSCALL_SETGID_E:
 		store_event(evt);
 		break;
 	case PPME_SYSCALL_READ_X:
@@ -170,6 +179,9 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 	case PPME_SYSCALL_PWRITEV_X:
 		parse_rw_exit(evt);
 		break;
+	case PPME_SYSCALL_SENDFILE_X:
+		parse_sendfile_exit(evt);
+		break;
 	case PPME_SYSCALL_OPEN_X:
 	case PPME_SYSCALL_CREAT_X:
 	case PPME_SYSCALL_OPENAT_X:
@@ -182,16 +194,21 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 		break;
 	case PPME_SYSCALL_CLONE_11_X:
 	case PPME_SYSCALL_CLONE_16_X:
+	case PPME_SYSCALL_CLONE_17_X:
 	case PPME_SYSCALL_FORK_X:
 	case PPME_SYSCALL_VFORK_X:
+	case PPME_SYSCALL_FORK_17_X:
+	case PPME_SYSCALL_VFORK_17_X:
 		parse_clone_exit(evt);
 		break;
 	case PPME_SYSCALL_EXECVE_8_X:
 	case PPME_SYSCALL_EXECVE_13_X:
 	case PPME_SYSCALL_EXECVE_14_X:
+	case PPME_SYSCALL_EXECVE_15_X:
 		parse_execve_exit(evt);
 		break;
 	case PPME_PROCEXIT_E:
+	case PPME_PROCEXIT_1_E:
 		parse_thread_exit(evt);
 		break;
 	case PPME_SYSCALL_PIPE_X:
@@ -268,6 +285,18 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 	case PPME_SYSCALL_MMAP2_X:
 	case PPME_SYSCALL_MUNMAP_X:
 		parse_brk_munmap_mmap_exit(evt);
+		break;
+	case PPME_SYSCALL_SETRESUID_X:
+		parse_setresuid_exit(evt);
+		break;
+	case PPME_SYSCALL_SETRESGID_X:
+		parse_setresgid_exit(evt);
+		break;
+	case PPME_SYSCALL_SETUID_X:
+		parse_setuid_exit(evt);
+		break;
+	case PPME_SYSCALL_SETGID_X:
+		parse_setgid_exit(evt);
 		break;
 	default:
 		break;
@@ -349,6 +378,9 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 		etype == PPME_SYSCALL_CLONE_16_X ||
 		etype == PPME_SYSCALL_FORK_X ||
 		etype == PPME_SYSCALL_VFORK_X ||
+		etype == PPME_SYSCALL_CLONE_17_X ||
+		etype == PPME_SYSCALL_FORK_17_X ||
+		etype == PPME_SYSCALL_VFORK_17_X ||
 		etype == PPME_SCHEDSWITCH_6_E)
 	{
 		query_os = false;
@@ -358,7 +390,7 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 		query_os = true;
 	}
 
-	evt->m_tinfo = evt->get_thread_info(query_os);
+	evt->m_tinfo = m_inspector->get_thread(evt->m_pevt->tid, query_os, false);
 
 	if(etype == PPME_SCHEDSWITCH_6_E)
 	{
@@ -370,7 +402,10 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 		if(etype == PPME_SYSCALL_CLONE_11_X ||
 			etype == PPME_SYSCALL_CLONE_16_X ||
 			etype == PPME_SYSCALL_FORK_X ||
-			etype == PPME_SYSCALL_VFORK_X)
+			etype == PPME_SYSCALL_VFORK_X ||
+			etype == PPME_SYSCALL_CLONE_17_X ||
+			etype == PPME_SYSCALL_FORK_17_X ||
+			etype == PPME_SYSCALL_VFORK_17_X)
 		{
 #ifdef GATHER_INTERNAL_STATS
 			m_inspector->m_thread_manager->m_failed_lookups->decrement();
@@ -382,6 +417,11 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 		}
 
 		return false;
+	}
+
+	if(query_os)
+	{
+		evt->m_tinfo->m_flags |= PPM_CL_ACTIVE;
 	}
 
 	if(PPME_IS_ENTER(etype))
@@ -409,22 +449,24 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 	}
 	else
 	{
+		sinsp_threadinfo* tinfo = evt->m_tinfo;
+
 		//
 		// event latency
 		//
-		if(evt->m_tinfo->m_last_latency_entertime != 0)
+		if(tinfo->m_last_latency_entertime != 0)
 		{
-			evt->m_tinfo->m_latency = evt->get_ts() - evt->m_tinfo->m_last_latency_entertime;
-			ASSERT((int64_t)evt->m_tinfo->m_latency >= 0);
+			tinfo->m_latency = evt->get_ts() - tinfo->m_last_latency_entertime;
+			ASSERT((int64_t)tinfo->m_latency >= 0);
 		}
 
-		if(etype == evt->m_tinfo->m_lastevent_type + 1)
+		if(etype == tinfo->m_lastevent_type + 1)
 		{
-			evt->m_tinfo->set_lastevent_data_validity(true);
+			tinfo->set_lastevent_data_validity(true);
 		}
 		else
 		{
-			evt->m_tinfo->set_lastevent_data_validity(false);
+			tinfo->set_lastevent_data_validity(false);
 			return false;
 		}
 
@@ -452,7 +494,7 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 		//
 		if(eflags & EF_USES_FD)
 		{
-			evt->m_fdinfo = evt->m_tinfo->get_fd(evt->m_tinfo->m_lastevent_fd);
+			evt->m_fdinfo = tinfo->get_fd(tinfo->m_lastevent_fd);
 
 			if(evt->m_fdinfo == NULL)
 			{
@@ -475,14 +517,14 @@ bool sinsp_parser::reset(sinsp_evt *evt)
 
 				evt->m_fdinfo->m_flags &= ~sinsp_fdinfo_t::FLAGS_CLOSE_CANCELED;
 				eparams.m_fd = CANCELED_FD_NUMBER;
-				eparams.m_fdinfo = evt->m_tinfo->get_fd(CANCELED_FD_NUMBER);
+				eparams.m_fdinfo = tinfo->get_fd(CANCELED_FD_NUMBER);
 
 				//
 				// Remove the fd from the different tables
 				//
 				eparams.m_remove_from_table = true;
 				eparams.m_inspector = m_inspector;
-				eparams.m_tinfo = evt->m_tinfo;
+				eparams.m_tinfo = tinfo;
 				eparams.m_ts = evt->get_ts();
 
 				erase_fd(&eparams);
@@ -612,7 +654,6 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	sinsp_evt_param *parinfo;
 	int64_t tid = evt->get_tid();
 	int64_t childtid;
-	unordered_map<int64_t, sinsp_threadinfo>::iterator it;
 	bool is_inverted_clone = false; // true if clone() in the child returns before the one in the parent
 	bool tid_collision = false;
 	bool valid_parent = true;
@@ -624,6 +665,27 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	parinfo = evt->get_param(0);
 	ASSERT(parinfo->m_len == sizeof(int64_t));
 	childtid = *(int64_t *)parinfo->m_val;
+
+	switch(evt->get_type())
+	{
+	case PPME_SYSCALL_CLONE_11_X:
+		parinfo = evt->get_param(8);
+		break;
+	case PPME_SYSCALL_CLONE_16_X:
+	case PPME_SYSCALL_FORK_X:
+	case PPME_SYSCALL_VFORK_X:
+		parinfo = evt->get_param(13);
+		break;
+	case PPME_SYSCALL_CLONE_17_X:
+	case PPME_SYSCALL_FORK_17_X:
+	case PPME_SYSCALL_VFORK_17_X:
+		parinfo = evt->get_param(14);
+		break;
+	default:
+		ASSERT(false);
+	}
+	ASSERT(parinfo->m_len == sizeof(int32_t));
+	uint32_t flags = *(int32_t *)parinfo->m_val;
 
 	if(childtid < 0)
 	{
@@ -654,24 +716,8 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 			childtid = tid;
 
 			//
-			// Get the flags, and check if this is a process or a new thread
+			// Check if this is a process or a new thread
 			//
-			switch(evt->get_type())
-			{
-				case PPME_SYSCALL_CLONE_11_X:
-					parinfo = evt->get_param(8);
-					break;
-				case PPME_SYSCALL_CLONE_16_X:
-				case PPME_SYSCALL_FORK_X:
-				case PPME_SYSCALL_VFORK_X:
-					parinfo = evt->get_param(13);
-					break;
-				default:
-					ASSERT(false);
-			}
-			ASSERT(parinfo->m_len == sizeof(int32_t));
-			uint32_t flags = *(int32_t *)parinfo->m_val;
-
 			if(flags & PPM_CL_CLONE_THREAD)
 			{
 				//
@@ -804,8 +850,26 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 			// Parent not found in proc, use the event data
 			//
 			parinfo = evt->get_param(1);
-			tinfo.m_comm = (char*)parinfo->m_val;
-			tinfo.m_exe = tinfo.m_comm;
+			tinfo.m_exe = (char*)parinfo->m_val;
+
+			switch(etype)
+			{
+			case PPME_SYSCALL_CLONE_11_X:
+			case PPME_SYSCALL_CLONE_16_X:
+			case PPME_SYSCALL_FORK_X:
+			case PPME_SYSCALL_VFORK_X:
+				tinfo.m_comm = tinfo.m_exe;
+				break;
+			case PPME_SYSCALL_CLONE_17_X:
+			case PPME_SYSCALL_FORK_17_X:
+			case PPME_SYSCALL_VFORK_17_X:
+				parinfo = evt->get_param(13);
+				tinfo.m_comm = parinfo->m_val;
+				break;
+			default:
+				ASSERT(false);
+			}
+
 			parinfo = evt->get_param(2);
 			tinfo.set_args(parinfo->m_val, parinfo->m_len);
 
@@ -824,21 +888,7 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	tinfo.m_pid = *(int64_t *)parinfo->m_val;
 
 	// Get the flags, and check if this is a thread or a new thread
-	switch(etype)
-	{
-		case PPME_SYSCALL_CLONE_11_X:
-			parinfo = evt->get_param(8);
-			break;
-		case PPME_SYSCALL_CLONE_16_X:
-		case PPME_SYSCALL_FORK_X:
-		case PPME_SYSCALL_VFORK_X:
-			parinfo = evt->get_param(13);
-			break;
-		default:
-			ASSERT(false);
-	}
-	ASSERT(parinfo->m_len == sizeof(int32_t));
-	tinfo.m_flags = *(int32_t *)parinfo->m_val;
+	tinfo.m_flags = flags;
 
 	//
 	// If clone()'s PPM_CL_CLONE_THREAD is not set it means that a new
@@ -877,6 +927,32 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 		tinfo.m_flags |= PPM_CL_CLONE_INVERTED;
 	}
 
+	// Copy the command name
+	parinfo = evt->get_param(1);
+	tinfo.m_exe = (char*)parinfo->m_val;
+
+	switch(etype)
+	{
+	case PPME_SYSCALL_CLONE_11_X:
+	case PPME_SYSCALL_CLONE_16_X:
+	case PPME_SYSCALL_FORK_X:
+	case PPME_SYSCALL_VFORK_X:
+		tinfo.m_comm = tinfo.m_exe;
+		break;
+	case PPME_SYSCALL_CLONE_17_X:
+	case PPME_SYSCALL_FORK_17_X:
+	case PPME_SYSCALL_VFORK_17_X:
+		parinfo = evt->get_param(13);
+		tinfo.m_comm = parinfo->m_val;
+		break;
+	default:
+		ASSERT(false);
+	}
+
+	// Get the command arguments
+	parinfo = evt->get_param(2);
+	tinfo.set_args(parinfo->m_val, parinfo->m_len);
+
 	// Copy the working directory
 	parinfo = evt->get_param(6);
 	tinfo.set_cwd(parinfo->m_val, parinfo->m_len);
@@ -886,8 +962,16 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	ASSERT(parinfo->m_len == sizeof(int64_t));
 	tinfo.m_fdlimit = *(int64_t *)parinfo->m_val;
 
-	if(etype == PPME_SYSCALL_CLONE_16_X || etype == PPME_SYSCALL_FORK_X || etype == PPME_SYSCALL_VFORK_X)
+	switch(etype)
 	{
+	case PPME_SYSCALL_CLONE_11_X:
+		break;
+	case PPME_SYSCALL_CLONE_16_X:
+	case PPME_SYSCALL_CLONE_17_X:
+	case PPME_SYSCALL_FORK_X:
+	case PPME_SYSCALL_FORK_17_X:
+	case PPME_SYSCALL_VFORK_X:
+	case PPME_SYSCALL_VFORK_17_X:
 		// Get the pgflt_maj
 		parinfo = evt->get_param(8);
 		ASSERT(parinfo->m_len == sizeof(uint64_t));
@@ -912,21 +996,29 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 		parinfo = evt->get_param(12);
 		ASSERT(parinfo->m_len == sizeof(uint32_t));
 		tinfo.m_vmswap_kb = *(uint32_t *)parinfo->m_val;
+		break;
+	default:
+		ASSERT(false);
 	}
 
 	// Copy the uid
 	switch(etype)
 	{
-		case PPME_SYSCALL_CLONE_11_X:
-			parinfo = evt->get_param(9);
-			break;
-		case PPME_SYSCALL_CLONE_16_X:
-		case PPME_SYSCALL_FORK_X:
-		case PPME_SYSCALL_VFORK_X:
-			parinfo = evt->get_param(14);
-			break;
-		default:
-			ASSERT(false);
+	case PPME_SYSCALL_CLONE_11_X:
+		parinfo = evt->get_param(9);
+		break;
+	case PPME_SYSCALL_CLONE_16_X:
+	case PPME_SYSCALL_FORK_X:
+	case PPME_SYSCALL_VFORK_X:
+		parinfo = evt->get_param(14);
+		break;
+	case PPME_SYSCALL_CLONE_17_X:
+	case PPME_SYSCALL_FORK_17_X:
+	case PPME_SYSCALL_VFORK_17_X:
+		parinfo = evt->get_param(15);
+		break;
+	default:
+		ASSERT(false);
 	}
 	ASSERT(parinfo->m_len == sizeof(int32_t));
 	tinfo.m_uid = *(int32_t *)parinfo->m_val;
@@ -934,16 +1026,21 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	// Copy the uid
 	switch(etype)
 	{
-		case PPME_SYSCALL_CLONE_11_X:
-			parinfo = evt->get_param(10);
-			break;
-		case PPME_SYSCALL_CLONE_16_X:
-		case PPME_SYSCALL_FORK_X:
-		case PPME_SYSCALL_VFORK_X:
-			parinfo = evt->get_param(15);
-			break;
-		default:
-			ASSERT(false);
+	case PPME_SYSCALL_CLONE_11_X:
+		parinfo = evt->get_param(10);
+		break;
+	case PPME_SYSCALL_CLONE_16_X:
+	case PPME_SYSCALL_FORK_X:
+	case PPME_SYSCALL_VFORK_X:
+		parinfo = evt->get_param(15);
+		break;
+	case PPME_SYSCALL_CLONE_17_X:
+	case PPME_SYSCALL_FORK_17_X:
+	case PPME_SYSCALL_VFORK_17_X:
+		parinfo = evt->get_param(16);
+		break;
+	default:
+		ASSERT(false);
 	}
 	ASSERT(parinfo->m_len == sizeof(int32_t));
 	tinfo.m_gid = *(int32_t *)parinfo->m_val;
@@ -966,9 +1063,14 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 	if(tid_collision)
 	{
 		reset(evt);
+#ifdef HAS_ANALYZER
+		m_inspector->m_tid_collisions.push_back(tinfo.m_tid);
+#endif
+#ifdef _DEBUG
 		g_logger.format(sinsp_logger::SEV_INFO, 
 			"tid collision for %" PRIu64 "(%s)", 
 			tinfo.m_tid, tinfo.m_comm.c_str());
+#endif
 	}
 
 	return;
@@ -1005,20 +1107,26 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
 		return;
 	}
 
-	string prev_comm(evt->m_tinfo->m_comm);
-	string prev_exe(evt->m_tinfo->m_exe);
-
-	// Get the command name
+	// Get the exe
 	parinfo = evt->get_param(1);
-	string tmps = parinfo->m_val;
-	tmps = tmps.substr(tmps.rfind("/") + 1);
-	evt->m_tinfo->m_comm = tmps;
-
-	//
-	// XXX We should retrieve the full executable name from the arguments that execve receives in the kernel,
-	// but for the moment we don't do it, so we just copy the command name into the exe string
-	//
 	evt->m_tinfo->m_exe = parinfo->m_val;
+
+	switch(etype)
+	{
+	case PPME_SYSCALL_EXECVE_8_X:
+	case PPME_SYSCALL_EXECVE_13_X:
+	case PPME_SYSCALL_EXECVE_14_X:
+		// Old trace files didn't have comm, so just set it to exe
+		evt->m_tinfo->m_comm = evt->m_tinfo->m_exe;
+		break;
+	case PPME_SYSCALL_EXECVE_15_X:
+		// Get the comm
+		parinfo = evt->get_param(13);
+		evt->m_tinfo->m_comm = parinfo->m_val;
+		break;
+	default:
+		ASSERT(false);
+	}
 
 	// Get the command arguments
 	parinfo = evt->get_param(2);
@@ -1038,9 +1146,13 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
 	ASSERT(parinfo->m_len == sizeof(int64_t));
 	evt->m_tinfo->m_fdlimit = *(int64_t *)parinfo->m_val;
 
-	if(etype == PPME_SYSCALL_EXECVE_13_X ||
-		etype == PPME_SYSCALL_EXECVE_14_X)
+	switch(etype)
 	{
+	case PPME_SYSCALL_EXECVE_8_X:
+		break;
+	case PPME_SYSCALL_EXECVE_13_X:
+	case PPME_SYSCALL_EXECVE_14_X:
+	case PPME_SYSCALL_EXECVE_15_X:
 		// Get the pgflt_maj
 		parinfo = evt->get_param(8);
 		ASSERT(parinfo->m_len == sizeof(uint64_t));
@@ -1065,13 +1177,28 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
 		parinfo = evt->get_param(12);
 		ASSERT(parinfo->m_len == sizeof(uint32_t));
 		evt->m_tinfo->m_vmswap_kb = *(uint32_t *)parinfo->m_val;
+		break;
+	default:
+		ASSERT(false);
+	}
 
-		if(etype == PPME_SYSCALL_EXECVE_14_X)
-		{
-			// Get the environment
-			parinfo = evt->get_param(13);
-			evt->m_tinfo->set_env(parinfo->m_val, parinfo->m_len);
-		}
+	switch(etype)
+	{
+	case PPME_SYSCALL_EXECVE_8_X:
+	case PPME_SYSCALL_EXECVE_13_X:
+		break;
+	case PPME_SYSCALL_EXECVE_14_X:
+		// Get the environment
+		parinfo = evt->get_param(13);
+		evt->m_tinfo->set_env(parinfo->m_val, parinfo->m_len);
+		break;
+	case PPME_SYSCALL_EXECVE_15_X:
+		// Get the environment
+		parinfo = evt->get_param(14);
+		evt->m_tinfo->set_env(parinfo->m_val, parinfo->m_len);
+		break;
+	default:
+		ASSERT(false);
 	}
 
 	//
@@ -1085,7 +1212,7 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
 	// Clear the flags for this thread, making sure to propagate the inverted flag
 	//
 	bool inverted = ((evt->m_tinfo->m_flags & PPM_CL_CLONE_INVERTED) != 0);
-	evt->m_tinfo->m_flags = 0;
+	evt->m_tinfo->m_flags = PPM_CL_ACTIVE;
 	if(inverted)
 	{
 		evt->m_tinfo->m_flags |= PPM_CL_CLONE_INVERTED;
@@ -1668,7 +1795,6 @@ void sinsp_parser::parse_accept_exit(sinsp_evt *evt)
 		m_fd_listener->on_accept(evt, fd, packed_data, &fdi);
 	}
 
-
 	//
 	// Mark this fd as a server
 	//
@@ -2217,7 +2343,8 @@ void sinsp_parser::parse_rw_exit(sinsp_evt *evt)
 			//
 			if(m_fd_listener)
 			{
-				m_fd_listener->on_read(evt, tid, evt->m_tinfo->m_lastevent_fd, data, (uint32_t)retval, datalen);
+				m_fd_listener->on_read(evt, tid, evt->m_tinfo->m_lastevent_fd, evt->m_fdinfo, 
+					data, (uint32_t)retval, datalen);
 			}
 
 			//
@@ -2302,7 +2429,8 @@ void sinsp_parser::parse_rw_exit(sinsp_evt *evt)
 			//
 			if(m_fd_listener)
 			{
-				m_fd_listener->on_write(evt, tid, evt->m_tinfo->m_lastevent_fd, data, (uint32_t)retval, datalen);
+				m_fd_listener->on_write(evt, tid, evt->m_tinfo->m_lastevent_fd, evt->m_fdinfo,
+					data, (uint32_t)retval, datalen);
 			}
 
 			//
@@ -2317,6 +2445,53 @@ void sinsp_parser::parse_rw_exit(sinsp_evt *evt)
 					(*it)->on_write(evt, data, datalen);
 				}
 			}
+		}
+	}
+}
+
+void sinsp_parser::parse_sendfile_exit(sinsp_evt *evt)
+{
+	sinsp_evt_param *parinfo;
+	int64_t retval;
+
+	if(!evt->m_fdinfo)
+	{
+		return;
+	}
+
+	//
+	// Extract the return value
+	//
+	parinfo = evt->get_param(0);
+	ASSERT(parinfo->m_len == sizeof(int64_t));
+	retval = *(int64_t *)parinfo->m_val;
+
+	//
+	// If the operation was successful, validate that the fd exists
+	//
+	if(retval >= 0)
+	{
+		sinsp_evt *enter_evt = &m_tmp_evt;
+		int64_t fdin;
+
+		if(!retrieve_enter_event(enter_evt, evt))
+		{
+			return;
+		}
+
+		//
+		// Extract the in FD
+		//
+		parinfo = enter_evt->get_param(1);
+		ASSERT(parinfo->m_len == sizeof(int64_t));
+		fdin = *(int64_t *)parinfo->m_val;
+
+		//
+		// If there's an fd listener, call it now
+		//
+		if(m_fd_listener)
+		{
+			m_fd_listener->on_sendfile(evt, fdin, (uint32_t)retval);
 		}
 	}
 }
@@ -2908,5 +3083,101 @@ void sinsp_parser::parse_brk_munmap_mmap_exit(sinsp_evt* evt)
 		parinfo = evt->get_param(3);
 		evt->m_tinfo->m_vmswap_kb = *(uint32_t *)parinfo->m_val;
 		ASSERT(parinfo->m_len == sizeof(uint32_t));
+	}
+}
+
+void sinsp_parser::parse_setresuid_exit(sinsp_evt *evt)
+{
+	sinsp_evt_param *parinfo;
+	int64_t retval;
+	sinsp_evt *enter_evt = &m_tmp_evt;
+
+	//
+	// Extract the return value
+	//
+	parinfo = evt->get_param(0);
+	retval = *(int64_t *)parinfo->m_val;
+	ASSERT(parinfo->m_len == sizeof(int64_t));
+
+	if(retval >= 0 && retrieve_enter_event(enter_evt, evt))
+	{
+		parinfo = enter_evt->get_param(1);
+		ASSERT(parinfo->m_len == sizeof(uint32_t));
+		uint32_t new_euid = *(uint32_t *)parinfo->m_val;
+
+		if(new_euid < std::numeric_limits<uint32_t>::max())
+		{
+			evt->get_thread_info()->m_uid = new_euid;
+		}
+	}
+}
+
+void sinsp_parser::parse_setresgid_exit(sinsp_evt *evt)
+{
+	sinsp_evt_param *parinfo;
+	int64_t retval;
+	sinsp_evt *enter_evt = &m_tmp_evt;
+
+	//
+	// Extract the return value
+	//
+	parinfo = evt->get_param(0);
+	retval = *(int64_t *)parinfo->m_val;
+	ASSERT(parinfo->m_len == sizeof(int64_t));
+
+	if(retval >= 0 && retrieve_enter_event(enter_evt, evt))
+	{
+		parinfo = enter_evt->get_param(1);
+		ASSERT(parinfo->m_len == sizeof(uint32_t));
+		uint32_t new_egid = *(uint32_t *)parinfo->m_val;
+
+		if(new_egid < std::numeric_limits<uint32_t>::max())
+		{
+			evt->get_thread_info()->m_gid = new_egid;
+		}
+	}
+}
+
+void sinsp_parser::parse_setuid_exit(sinsp_evt *evt)
+{
+	sinsp_evt_param *parinfo;
+	int64_t retval;
+	sinsp_evt *enter_evt = &m_tmp_evt;
+
+	//
+	// Extract the return value
+	//
+	parinfo = evt->get_param(0);
+	retval = *(int64_t *)parinfo->m_val;
+	ASSERT(parinfo->m_len == sizeof(int64_t));
+
+	if(retval >= 0 && retrieve_enter_event(enter_evt, evt))
+	{
+		parinfo = enter_evt->get_param(0);
+		ASSERT(parinfo->m_len == sizeof(uint32_t));
+		uint32_t new_euid = *(uint32_t *)parinfo->m_val;
+		evt->get_thread_info()->m_uid = new_euid;
+	}
+}
+
+void sinsp_parser::parse_setgid_exit(sinsp_evt *evt)
+{
+	sinsp_evt_param *parinfo;
+	int64_t retval;
+	sinsp_evt *enter_evt = &m_tmp_evt;
+
+	//
+	// Extract the return value
+	//
+	parinfo = evt->get_param(0);
+	retval = *(int64_t *)parinfo->m_val;
+	ASSERT(parinfo->m_len == sizeof(int64_t));
+
+	if(retval >= 0 && retrieve_enter_event(enter_evt, evt))
+	{
+		parinfo = enter_evt->get_param(0);
+		ASSERT(parinfo->m_len == sizeof(uint32_t));
+		uint32_t new_egid = *(uint32_t *)parinfo->m_val;
+		evt->get_thread_info()->m_gid = new_egid;
 	}
 }

@@ -813,7 +813,7 @@ bool sinsp_filter_check_fd::compare(sinsp_evt *evt)
 const filtercheck_field_info sinsp_filter_check_thread_fields[] =
 {
 	{PT_INT64, EPF_NONE, PF_DEC, "proc.pid", "the id of the process generating the event."},
-	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.exe", "the full name (including the path) of the executable generating the event."},
+	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.exe", "the first command line argument (usually the executable name or a custom one)."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.name", "the name (excluding the path) of the executable generating the event."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.args", "the arguments passed on the command line when starting the process generating the event."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "proc.env", "the environment variables of the process generating the event."},
@@ -1066,6 +1066,8 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len)
 	case TYPE_CWD:
 		m_tstr = tinfo->get_cwd();
 		return (uint8_t*)m_tstr.c_str();
+	case TYPE_NCHILDS:
+		return (uint8_t*)&tinfo->m_nchilds;
 	case TYPE_ISMAINTHREAD:
 		m_tbool = (uint32_t)tinfo->is_main_thread();
 		return (uint8_t*)&m_tbool;
@@ -1477,6 +1479,7 @@ const filtercheck_field_info sinsp_filter_check_event_fields[] =
 	{PT_DYN, EPF_REQUIRES_ARGUMENT, PF_NA, "evt.rawarg", "one of the event arguments specified by name. E.g. 'arg.fd'."},
 	{PT_CHARBUF, EPF_NONE, PF_NA, "evt.info", "for most events, this field returns the same value as evt.args. However, for some events (like writes to /dev/log) it provides higher level information coming from decoding the arguments."},
 	{PT_BYTEBUF, EPF_NONE, PF_NA, "evt.buffer", "the binary data buffer for events that have one, like read(), recvfrom(), etc. Use this field in filters with 'contains' to search into I/O data buffers."},
+	{PT_UINT64, EPF_NONE, PF_DEC, "evt.buflen", "the lenght of the binary data buffer for events that have one, like read(), recvfrom(), etc."},
 	{PT_CHARBUF, EPF_NONE, PF_DEC, "evt.res", "event return value, as an error code string (e.g. 'ENOENT')."},
 	{PT_INT64, EPF_NONE, PF_DEC, "evt.rawres", "event return value, as a number (e.g. -2). Useful for range comparisons."},
 	{PT_BOOL, EPF_NONE, PF_NA, "evt.failed", "'true' for events that returned an error status."},
@@ -2009,24 +2012,9 @@ uint8_t* sinsp_filter_check_event::extract(sinsp_evt *evt, OUT uint32_t* len)
 		{
 			m_u64val = 0;
 
-			if(evt->get_direction() == SCAP_ED_IN)
-			{
-				if(evt->m_tinfo != NULL)
-				{
-					uint16_t* pt = (uint16_t*)evt->m_tinfo->get_private_state(m_th_state_id);
-					*pt = evt->get_type();
-				}
-
-				return (uint8_t*)&m_u64val;
-			}
-
 			if(evt->m_tinfo != NULL)
 			{
-				uint16_t* pt = (uint16_t*)evt->m_tinfo->get_private_state(m_th_state_id);
-				if(evt->m_tinfo->m_prevevent_ts && evt->get_type() == *pt + 1)
-				{
-					m_u64val = (evt->get_ts() - evt->m_tinfo->m_prevevent_ts);
-				}
+				m_u64val = evt->m_tinfo->m_latency;
 			}
 
 			return (uint8_t*)&m_u64val;
@@ -2036,30 +2024,17 @@ uint8_t* sinsp_filter_check_event::extract(sinsp_evt *evt, OUT uint32_t* len)
 		{
 			m_u64val = 0;
 
-			if(evt->get_direction() == SCAP_ED_IN)
-			{
-				if(evt->m_tinfo != NULL)
-				{
-					uint16_t* pt = (uint16_t*)evt->m_tinfo->get_private_state(m_th_state_id);
-					*pt = evt->get_type();
-				}
-
-				return (uint8_t*)&m_u64val;
-			}
-
 			if(evt->m_tinfo != NULL)
 			{
-				uint16_t* pt = (uint16_t*)evt->m_tinfo->get_private_state(m_th_state_id);
-				if(evt->m_tinfo->m_prevevent_ts && evt->get_type() == *pt + 1)
+				uint64_t lat = evt->m_tinfo->m_latency;
+
+				if(m_field_id == TYPE_LATENCY_S)
 				{
-					if(m_field_id == TYPE_LATENCY_S)
-					{
-						m_u64val = (evt->get_ts() - evt->m_tinfo->m_prevevent_ts) / 1000000000;
-					}
-					else
-					{
-						m_u64val = (evt->get_ts() - evt->m_tinfo->m_prevevent_ts) % 1000000000;
-					}
+					m_u64val = lat / 1000000000;
+				}
+				else
+				{
+					m_u64val = lat % 1000000000;
 				}
 			}
 
@@ -2238,6 +2213,34 @@ uint8_t* sinsp_filter_check_event::extract(sinsp_evt *evt, OUT uint32_t* len)
 			*len = evt->m_rawbuf_str_len;
 
 			return (uint8_t*)argstr;
+		}
+	case TYPE_BUFLEN:
+		{
+			if(evt->get_direction() == SCAP_ED_OUT)
+			{
+				if(evt->get_category() & EC_IO_BASE)
+				{
+					if(evt->m_fdinfo)
+					{
+						sinsp_evt_param *parinfo;
+						int64_t retval;
+
+						//
+						// Extract the return value
+						//
+						parinfo = evt->get_param(0);
+						ASSERT(parinfo->m_len == sizeof(int64_t));
+						retval = *(int64_t *)parinfo->m_val;
+						
+						if(retval >= 0)
+						{
+							return (uint8_t*)parinfo->m_val;
+						}
+					}
+				}
+			}
+
+			return NULL;
 		}
 	case TYPE_RESRAW:
 		{
@@ -2531,7 +2534,6 @@ uint8_t* sinsp_filter_check_user::extract(sinsp_evt *evt, OUT uint32_t* len)
 
 		ASSERT(m_inspector != NULL);
 		const unordered_map<uint32_t, scap_userinfo*>* userlist = m_inspector->get_userlist();
-		ASSERT(userlist->size() != 0);
 
 		if(tinfo->m_uid == 0xffffffff)
 		{
@@ -2541,7 +2543,6 @@ uint8_t* sinsp_filter_check_user::extract(sinsp_evt *evt, OUT uint32_t* len)
 		it = userlist->find(tinfo->m_uid);
 		if(it == userlist->end())
 		{
-			ASSERT(false);
 			return NULL;
 		}
 

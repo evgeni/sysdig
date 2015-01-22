@@ -33,6 +33,7 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #include <linux/ptrace.h>
 #include <linux/version.h>
 #include <linux/module.h>
+#include <linux/quota.h>
 #include <asm/mman.h>
 
 #include "ppm_ringbuffer.h"
@@ -111,6 +112,13 @@ static int f_sys_mmap_e(struct event_filler_arguments *args);
 static int f_sys_brk_munmap_mmap_x(struct event_filler_arguments *args);
 static int f_sys_renameat_x(struct event_filler_arguments *args);
 static int f_sys_symlinkat_x(struct event_filler_arguments *args);
+static int f_sys_procexit_e(struct event_filler_arguments *args);
+static int f_sys_sendfile_e(struct event_filler_arguments *args);
+static int f_sys_sendfile_x(struct event_filler_arguments *args);
+static int f_sys_quotactl_e(struct event_filler_arguments *args);
+static int f_sys_quotactl_x(struct event_filler_arguments *args);
+static int f_sys_sysdigevent_e(struct event_filler_arguments *args);
+static int f_sys_getresuid_and_gid_x(struct event_filler_arguments *args);
 
 /*
  * Note, this is not part of g_event_info because we want to share g_event_info with userland.
@@ -129,7 +137,7 @@ const struct ppm_event_entry g_ppm_events[PPM_EVENT_MAX] = {
 	[PPME_SYSCALL_READ_X] = {f_sys_read_x},
 	[PPME_SYSCALL_WRITE_E] = {PPM_AUTOFILL, 2, APT_REG, {{0}, {2} } },
 	[PPME_SYSCALL_WRITE_X] = {f_sys_write_x},
-	[PPME_PROCEXIT_E] = {f_sys_empty},
+	[PPME_PROCEXIT_1_E] = {f_sys_procexit_e},
 	[PPME_SOCKET_SOCKET_E] = {PPM_AUTOFILL, 3, APT_SOCK, {{0}, {1}, {2} } },
 	[PPME_SOCKET_SOCKET_X] = {f_sys_single_x},
 	[PPME_SOCKET_SOCKETPAIR_E] = {PPM_AUTOFILL, 3, APT_SOCK, {{0}, {1}, {2} } },
@@ -260,10 +268,10 @@ const struct ppm_event_entry g_ppm_events[PPM_EVENT_MAX] = {
 	[PPME_DROP_X] = {f_sched_drop},
 	[PPME_SYSCALL_FCNTL_E] = {f_sched_fcntl_e},
 	[PPME_SYSCALL_FCNTL_X] = {f_sys_single_x},
-	[PPME_SYSCALL_EXECVE_14_E] = {f_sys_empty},
-	[PPME_SYSCALL_EXECVE_14_X] = {f_proc_startupdate},
-	[PPME_SYSCALL_CLONE_16_E] = {f_sys_empty},
-	[PPME_SYSCALL_CLONE_16_X] = {f_proc_startupdate},
+	[PPME_SYSCALL_EXECVE_15_E] = {f_sys_empty},
+	[PPME_SYSCALL_EXECVE_15_X] = {f_proc_startupdate},
+	[PPME_SYSCALL_CLONE_17_E] = {f_sys_empty},
+	[PPME_SYSCALL_CLONE_17_X] = {f_proc_startupdate},
 	[PPME_SYSCALL_BRK_4_E] = {PPM_AUTOFILL, 1, APT_REG, {{0} } },
 	[PPME_SYSCALL_BRK_4_X] = {f_sys_brk_munmap_mmap_x},
 	[PPME_SYSCALL_MMAP_E] = {f_sys_mmap_e},
@@ -284,10 +292,35 @@ const struct ppm_event_entry g_ppm_events[PPM_EVENT_MAX] = {
 	[PPME_SYSCALL_SYMLINK_X] = {PPM_AUTOFILL, 3, APT_REG, {{AF_ID_RETVAL}, {0}, {1} } },
 	[PPME_SYSCALL_SYMLINKAT_E] = {f_sys_empty},
 	[PPME_SYSCALL_SYMLINKAT_X] = {f_sys_symlinkat_x},
-	[PPME_SYSCALL_FORK_E] = {f_sys_empty},
-	[PPME_SYSCALL_VFORK_X] = {f_proc_startupdate},
-	[PPME_SYSCALL_VFORK_E] = {f_sys_empty},
-	[PPME_SYSCALL_VFORK_X] = {f_proc_startupdate},
+	[PPME_SYSCALL_FORK_17_E] = {f_sys_empty},
+	[PPME_SYSCALL_FORK_17_X] = {f_proc_startupdate},
+	[PPME_SYSCALL_VFORK_17_E] = {f_sys_empty},
+	[PPME_SYSCALL_VFORK_17_X] = {f_proc_startupdate},
+	[PPME_SYSCALL_SENDFILE_E] = {f_sys_sendfile_e},
+	[PPME_SYSCALL_SENDFILE_X] = {f_sys_sendfile_x},
+	[PPME_SYSCALL_QUOTACTL_E] = {f_sys_quotactl_e},
+	[PPME_SYSCALL_QUOTACTL_X] = {f_sys_quotactl_x},
+	[PPME_SYSCALL_SETRESUID_E] = {PPM_AUTOFILL, 3, APT_REG, {{0}, {1}, {2} } },
+	[PPME_SYSCALL_SETRESUID_X] = {PPM_AUTOFILL, 1, APT_REG, {{AF_ID_RETVAL} } },
+	[PPME_SYSCALL_SETRESGID_E] = {PPM_AUTOFILL, 3, APT_REG, {{0}, {1}, {2} } },
+	[PPME_SYSCALL_SETRESGID_X] = {PPM_AUTOFILL, 1, APT_REG, {{AF_ID_RETVAL} } },
+	[PPME_SYSDIGEVENT_E] = {f_sys_sysdigevent_e},
+	[PPME_SYSCALL_SETUID_E] = {PPM_AUTOFILL, 1, APT_REG, {{0} } },
+	[PPME_SYSCALL_SETUID_X] = {PPM_AUTOFILL, 1, APT_REG, {{AF_ID_RETVAL} } },
+	[PPME_SYSCALL_SETGID_E] = {PPM_AUTOFILL, 1, APT_REG, {{0} } },
+	[PPME_SYSCALL_SETGID_X] = {PPM_AUTOFILL, 1, APT_REG, {{AF_ID_RETVAL} } },
+	[PPME_SYSCALL_GETUID_E] = {f_sys_empty},
+	[PPME_SYSCALL_GETUID_X] = {PPM_AUTOFILL, 1, APT_REG, {{AF_ID_RETVAL} } },
+	[PPME_SYSCALL_GETEUID_E] = {f_sys_empty},
+	[PPME_SYSCALL_GETEUID_X] = {PPM_AUTOFILL, 1, APT_REG, {{AF_ID_RETVAL} } },
+	[PPME_SYSCALL_GETGID_E] = {f_sys_empty},
+	[PPME_SYSCALL_GETGID_X] = {PPM_AUTOFILL, 1, APT_REG, {{AF_ID_RETVAL} } },
+	[PPME_SYSCALL_GETEGID_E] = {f_sys_empty},
+	[PPME_SYSCALL_GETEGID_X] = {PPM_AUTOFILL, 1, APT_REG, {{AF_ID_RETVAL} } },
+	[PPME_SYSCALL_GETRESUID_E] = {f_sys_empty},
+	[PPME_SYSCALL_GETRESUID_X] = {f_sys_getresuid_and_gid_x},
+	[PPME_SYSCALL_GETRESGID_E] = {f_sys_empty},
+	[PPME_SYSCALL_GETRESGID_X] = {f_sys_getresuid_and_gid_x},
 };
 
 /*
@@ -298,11 +331,12 @@ const struct ppm_event_entry g_ppm_events[PPM_EVENT_MAX] = {
 #define compat_ptr(X) X
 #endif
 
-#define merge_64(hi, lo) ((((unsigned long long)(hi)) << 32) + ((lo) & 0xffffffffUL));
+#define merge_64(hi, lo) ((((unsigned long long)(hi)) << 32) + ((lo) & 0xffffffffUL))
 
 static int f_sys_generic(struct event_filler_arguments *args)
 {
 	int res;
+	long table_index = args->syscall_id - SYSCALL_TABLE_ID0;
 
 #ifdef __NR_socketcall
 	if (unlikely(args->syscall_id == __NR_socketcall)) {
@@ -311,41 +345,36 @@ static int f_sys_generic(struct event_filler_arguments *args)
 		 */
 		ASSERT(false);
 		return PPM_FAILURE_BUG;
-	} else {
+	}
 #endif /* __NR_socketcall */
+	/*
+	 * name
+	 */
+	if (likely(table_index >= 0 &&
+		   table_index <  SYSCALL_TABLE_SIZE)) {
+		enum ppm_syscall_code sc_code = g_syscall_code_routing_table[table_index];
+
 		/*
-		 * name
+		 * ID
 		 */
-		long table_index = args->syscall_id - SYSCALL_TABLE_ID0;
+		res = val_to_ring(args, sc_code, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
 
-		if (likely(table_index >= 0 &&
-			   table_index <  SYSCALL_TABLE_SIZE)) {
-			enum ppm_syscall_code sc_code = g_syscall_code_routing_table[table_index];
-
+		if (args->event_type == PPME_GENERIC_E) {
 			/*
-			 * ID
+			 * nativeID
 			 */
-			res = val_to_ring(args, sc_code, 0, false, 0);
-			if (unlikely(res != PPM_SUCCESS))
-				return res;
-
-			if (args->event_type == PPME_GENERIC_E) {
-				/*
-				 * nativeID
-				 */
-				res = val_to_ring(args, args->syscall_id, 0, false, 0);
-				if (unlikely(res != PPM_SUCCESS))
-					return res;
-			}
-		} else {
-			ASSERT(false);
-			res = val_to_ring(args, (unsigned long)"<out of bound>", 0, false, 0);
+			res = val_to_ring(args, args->syscall_id, 0, false, 0);
 			if (unlikely(res != PPM_SUCCESS))
 				return res;
 		}
-#ifdef __NR_socketcall
+	} else {
+		ASSERT(false);
+		res = val_to_ring(args, (unsigned long)"<out of bound>", 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
 	}
-#endif
 
 	return add_sentinel(args);
 }
@@ -698,14 +727,18 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 
 		args_len = mm->arg_end - mm->arg_start;
 
-		if (args_len > PAGE_SIZE)
-			args_len = PAGE_SIZE;
+		if (args_len) {
+			if (args_len > PAGE_SIZE)
+				args_len = PAGE_SIZE;
 
-		if (unlikely(ppm_copy_from_user(args->str_storage, (const void __user *)mm->arg_start, args_len)))
-			return PPM_FAILURE_INVALID_USER_MEMORY;
+			if (unlikely(ppm_copy_from_user(args->str_storage, (const void __user *)mm->arg_start, args_len)))
+				return PPM_FAILURE_INVALID_USER_MEMORY;
 
-		args->str_storage[args_len - 1] = 0;
-
+			args->str_storage[args_len - 1] = 0;
+		} else {
+			*args->str_storage = 0;
+		}
+		
 		exe_len = strnlen(args->str_storage, args_len);
 		if (exe_len < args_len)
 			++exe_len;
@@ -817,9 +850,16 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 
-	if (args->event_type == PPME_SYSCALL_CLONE_16_X || 
-		args->event_type == PPME_SYSCALL_FORK_X ||
-		args->event_type == PPME_SYSCALL_VFORK_X) {
+	/*
+	 * comm
+	 */
+	res = val_to_ring(args, (uint64_t)current->comm, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	if (args->event_type == PPME_SYSCALL_CLONE_17_X ||
+		args->event_type == PPME_SYSCALL_FORK_17_X ||
+		args->event_type == PPME_SYSCALL_VFORK_17_X) {
 		/*
 		 * clone-only parameters
 		 */
@@ -834,11 +874,11 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 		/*
 		 * flags
 		 */
-		if (args->event_type == PPME_SYSCALL_CLONE_16_X) {
-			syscall_get_arguments(current, args->regs, 0, 1, &val);			
-		} else {
+		if (args->event_type == PPME_SYSCALL_CLONE_17_X)
+			syscall_get_arguments(current, args->regs, 0, 1, &val);
+		else
 			val = 0;
-		}
+
 		res = val_to_ring(args, (uint64_t)clone_flags_to_scap(val), 0, false, 0);
 		if (unlikely(res != PPM_SUCCESS))
 			return res;
@@ -856,7 +896,7 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 		res = val_to_ring(args, egid, 0, false, 0);
 		if (unlikely(res != PPM_SUCCESS))
 			return res;
-	} else if (args->event_type == PPME_SYSCALL_EXECVE_14_X) {
+	} else if (args->event_type == PPME_SYSCALL_EXECVE_15_X) {
 		/*
 		 * execve-only parameters
 		 */
@@ -868,13 +908,17 @@ static int f_proc_startupdate(struct event_filler_arguments *args)
 			 */
 			env_len = mm->env_end - mm->env_start;
 
-			if (env_len > PAGE_SIZE)
-				env_len = PAGE_SIZE;
+			if (env_len) {
+				if (env_len > PAGE_SIZE)
+					env_len = PAGE_SIZE;
 
-			if (unlikely(ppm_copy_from_user(args->str_storage, (const void __user *)mm->env_start, env_len)))
-				return PPM_FAILURE_INVALID_USER_MEMORY;
+				if (unlikely(ppm_copy_from_user(args->str_storage, (const void __user *)mm->env_start, env_len)))
+					return PPM_FAILURE_INVALID_USER_MEMORY;
 
-			args->str_storage[env_len - 1] = 0;
+				args->str_storage[env_len - 1] = 0;
+			} else {
+				*args->str_storage = 0;
+			}
 		} else {
 			/*
 			 * The call failed. Return empty strings for env as well
@@ -1911,10 +1955,10 @@ static inline u16 shutdown_how_to_scap(unsigned long how)
 		return SHUT_WR;
 	} else if (how == SHUT_RDWR) {
 		return SHUT_RDWR;
-	} else {
-		ASSERT(false);
-		return (u16)how;
 	}
+
+	ASSERT(false);
+	return (u16)how;
 }
 
 static int f_sys_shutdown_e(struct event_filler_arguments *args)
@@ -3575,6 +3619,500 @@ static int f_sys_symlinkat_x(struct event_filler_arguments *args)
 	 */
 	syscall_get_arguments(current, args->regs, 2, 1, &val);
 	res = val_to_ring(args, val, 0, true, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	return add_sentinel(args);
+}
+
+static int f_sys_procexit_e(struct event_filler_arguments *args)
+{
+	int res;
+
+	if (args->sched_prev == NULL) {
+		ASSERT(false);
+		return -1;
+	}
+
+	/*
+	 * status
+	 */
+	res = val_to_ring(args, args->sched_prev->exit_code, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	return add_sentinel(args);
+}
+
+static int f_sys_sendfile_e(struct event_filler_arguments *args)
+{
+	unsigned long val;
+	int res;
+	off_t offset;
+
+	/*
+	 * out_fd
+	 */
+	syscall_get_arguments(current, args->regs, 0, 1, &val);
+	res = val_to_ring(args, val, 0, true, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * in_fd
+	 */
+	syscall_get_arguments(current, args->regs, 1, 1, &val);
+	res = val_to_ring(args, val, 0, true, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * offset
+	 */
+	syscall_get_arguments(current, args->regs, 2, 1, &val);
+
+	if (val != 0) {
+		if (unlikely(ppm_copy_from_user(&offset, (void *)val, sizeof(off_t))))
+			val = 0;
+		else
+			val = offset;
+	}
+
+	res = val_to_ring(args, val, 0, true, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * size
+	 */
+	syscall_get_arguments(current, args->regs, 3, 1, &val);
+	res = val_to_ring(args, val, 0, true, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	return add_sentinel(args);
+}
+
+static int f_sys_sendfile_x(struct event_filler_arguments *args)
+{
+	unsigned long val;
+	int res;
+	int64_t retval;
+	off_t offset;
+
+	/*
+	 * res
+	 */
+	retval = (int64_t)syscall_get_return_value(current, args->regs);
+	res = val_to_ring(args, retval, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * offset
+	 */
+	syscall_get_arguments(current, args->regs, 2, 1, &val);
+
+	if (val != 0) {
+		if (unlikely(ppm_copy_from_user(&offset, (void *)val, sizeof(off_t))))
+			val = 0;
+		else
+			val = offset;
+	}
+
+	res = val_to_ring(args, val, 0, true, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	return add_sentinel(args);
+}
+
+static inline uint8_t quotactl_type_to_scap(unsigned long cmd)
+{
+	switch (cmd & SUBCMDMASK) {
+	case USRQUOTA:
+		return PPM_USRQUOTA;
+	case GRPQUOTA:
+		return PPM_GRPQUOTA;
+	}
+	return 0;
+}
+
+static inline uint16_t quotactl_cmd_to_scap(unsigned long cmd)
+{
+	uint16_t res;
+
+	switch (cmd >> SUBCMDSHIFT) {
+	case Q_SYNC:
+		res = PPM_Q_SYNC;
+		break;
+	case Q_QUOTAON:
+		res = PPM_Q_QUOTAON;
+		break;
+	case Q_QUOTAOFF:
+		res = PPM_Q_QUOTAOFF;
+		break;
+	case Q_GETFMT:
+		res = PPM_Q_GETFMT;
+		break;
+	case Q_GETINFO:
+		res = PPM_Q_GETINFO;
+		break;
+	case Q_SETINFO:
+		res = PPM_Q_SETINFO;
+		break;
+	case Q_GETQUOTA:
+		res = PPM_Q_GETQUOTA;
+		break;
+	case Q_SETQUOTA:
+		res = PPM_Q_SETQUOTA;
+		break;
+	/*
+	 *  XFS specific
+	 */
+	case Q_XQUOTAON:
+		res = PPM_Q_XQUOTAON;
+		break;
+	case Q_XQUOTAOFF:
+		res = PPM_Q_XQUOTAOFF;
+		break;
+	case Q_XGETQUOTA:
+		res = PPM_Q_XGETQUOTA;
+		break;
+	case Q_XSETQLIM:
+		res = PPM_Q_XSETQLIM;
+		break;
+	case Q_XGETQSTAT:
+		res = PPM_Q_XGETQSTAT;
+		break;
+	case Q_XQUOTARM:
+		res = PPM_Q_XQUOTARM;
+		break;
+	case Q_XQUOTASYNC:
+		res = PPM_Q_XQUOTASYNC;
+		break;
+	default:
+		res = 0;
+	}
+	return res;
+}
+
+static inline uint8_t quotactl_fmt_to_scap(unsigned long fmt)
+{
+	switch (fmt) {
+	case QFMT_VFS_OLD:
+		return PPM_QFMT_VFS_OLD;
+	case QFMT_VFS_V0:
+		return PPM_QFMT_VFS_V0;
+#ifdef QFMT_VFS_V1
+	case QFMT_VFS_V1:
+		return PPM_QFMT_VFS_V1;
+#endif
+	default:
+		return PPM_QFMT_NOT_USED;
+	}
+}
+
+static int f_sys_quotactl_e(struct event_filler_arguments *args)
+{
+	unsigned long val;
+	int res;
+	uint32_t id;
+	uint8_t quota_fmt;
+	uint16_t cmd;
+
+	/*
+	 * extract cmd
+	 */
+	syscall_get_arguments(current, args->regs, 0, 1, &val);
+	cmd = quotactl_cmd_to_scap(val);
+	res = val_to_ring(args, cmd, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * extract type
+	 */
+	res = val_to_ring(args, quotactl_type_to_scap(val), 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 *  extract id
+	 */
+	id = 0;
+	syscall_get_arguments(current, args->regs, 2, 1, &val);
+	if ((cmd == PPM_Q_GETQUOTA) ||
+		 (cmd == PPM_Q_SETQUOTA) ||
+		 (cmd == PPM_Q_XGETQUOTA) ||
+		 (cmd == PPM_Q_XSETQLIM)) {
+		/*
+		 * in this case id represent an userid or groupid so add it
+		 */
+		id = val;
+	}
+	res = val_to_ring(args, id, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * extract quota_fmt from id
+	 */
+	quota_fmt = PPM_QFMT_NOT_USED;
+	if (cmd == PPM_Q_QUOTAON)
+		quota_fmt = quotactl_fmt_to_scap(val);
+
+	res = val_to_ring(args, quota_fmt, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	return add_sentinel(args);
+}
+
+static int f_sys_quotactl_x(struct event_filler_arguments *args)
+{
+	unsigned long val, len;
+	int res;
+	int64_t retval;
+	uint16_t cmd;
+	struct if_dqblk dqblk;
+	struct if_dqinfo dqinfo;
+	uint32_t quota_fmt_out;
+
+	char empty_string[] = "";
+
+	/*
+	 * extract cmd
+	 */
+	syscall_get_arguments(current, args->regs, 0, 1, &val);
+	cmd = quotactl_cmd_to_scap(val);
+
+	/*
+	 * return value
+	 */
+	retval = (int64_t)syscall_get_return_value(current, args->regs);
+	res = val_to_ring(args, retval, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * Add special
+	 */
+	syscall_get_arguments(current, args->regs, 1, 1, &val);
+	res = val_to_ring(args, val, 0, true, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * get addr
+	 */
+	syscall_get_arguments(current, args->regs, 3, 1, &val);
+
+	/*
+	 * get quotafilepath only for QUOTAON
+	 */
+	if (cmd == PPM_Q_QUOTAON)
+		res = val_to_ring(args, val, 0, true, 0);
+	else
+		res = val_to_ring(args, (unsigned long)empty_string, 0, false, 0);
+
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * dqblk fields if present
+	 */
+	dqblk.dqb_valid = 0;
+	if ((cmd == PPM_Q_GETQUOTA) || (cmd == PPM_Q_SETQUOTA)) {
+		len = ppm_copy_from_user(&dqblk, (void *)val, sizeof(struct if_dqblk));
+		if (unlikely(len != 0))
+			return PPM_FAILURE_INVALID_USER_MEMORY;
+	}
+	if (dqblk.dqb_valid & QIF_BLIMITS) {
+		res = val_to_ring(args, dqblk.dqb_bhardlimit, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+		res = val_to_ring(args, dqblk.dqb_bsoftlimit, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	} else {
+		res = val_to_ring(args, 0, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+		res = val_to_ring(args, 0, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	}
+
+	if (dqblk.dqb_valid & QIF_SPACE) {
+		res = val_to_ring(args, dqblk.dqb_curspace, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	} else {
+		res = val_to_ring(args, 0, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	}
+
+	if (dqblk.dqb_valid & QIF_ILIMITS) {
+		res = val_to_ring(args, dqblk.dqb_ihardlimit, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+		res = val_to_ring(args, dqblk.dqb_isoftlimit, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	} else {
+		res = val_to_ring(args, 0, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+		res = val_to_ring(args, 0, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	}
+
+	if (dqblk.dqb_valid & QIF_BTIME) {
+		res = val_to_ring(args, dqblk.dqb_btime, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	} else {
+		res = val_to_ring(args, 0, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	}
+
+	if (dqblk.dqb_valid & QIF_ITIME) {
+		res = val_to_ring(args, dqblk.dqb_itime, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	} else {
+		res = val_to_ring(args, 0, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	}
+
+	/*
+	 * dqinfo fields if present
+	 */
+	dqinfo.dqi_valid = 0;
+	if ((cmd == PPM_Q_GETINFO) || (cmd == PPM_Q_SETINFO)) {
+		len = ppm_copy_from_user(&dqinfo, (void *)val, sizeof(struct if_dqinfo));
+		if (unlikely(len != 0))
+			return PPM_FAILURE_INVALID_USER_MEMORY;
+	}
+
+	if (dqinfo.dqi_valid & IIF_BGRACE) {
+		res = val_to_ring(args, dqinfo.dqi_bgrace, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	} else {
+		res = val_to_ring(args, 0, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	}
+
+	if (dqinfo.dqi_valid & IIF_IGRACE) {
+		res = val_to_ring(args, dqinfo.dqi_igrace, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	} else {
+		res = val_to_ring(args, 0, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	}
+
+	if (dqinfo.dqi_valid & IIF_FLAGS) {
+		res = val_to_ring(args, dqinfo.dqi_flags, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	} else {
+		res = val_to_ring(args, 0, 0, false, 0);
+		if (unlikely(res != PPM_SUCCESS))
+			return res;
+	}
+
+	quota_fmt_out = PPM_QFMT_NOT_USED;
+	if (cmd == PPM_Q_GETFMT) {
+		len = ppm_copy_from_user(&quota_fmt_out, (void *)val, sizeof(uint32_t));
+		if (unlikely(len != 0))
+			return PPM_FAILURE_INVALID_USER_MEMORY;
+		quota_fmt_out = quotactl_fmt_to_scap(quota_fmt_out);
+	}
+	res = val_to_ring(args, quota_fmt_out, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	return add_sentinel(args);
+}
+
+static int f_sys_sysdigevent_e(struct event_filler_arguments *args)
+{
+	int res;
+
+	/*
+	 * event_type
+	 */
+	res = val_to_ring(args, (unsigned long)args->sched_prev, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * event_data
+	 */
+	res = val_to_ring(args, (unsigned long)args->sched_next, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	return add_sentinel(args);
+}
+
+static int f_sys_getresuid_and_gid_x(struct event_filler_arguments *args)
+{
+	int res;
+	unsigned long val, len;
+	uint32_t uid;
+	int16_t retval;
+
+	/*
+	 * return value
+	 */
+	retval = (int64_t)syscall_get_return_value(current, args->regs);
+	res = val_to_ring(args, retval, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * ruid
+	 */
+	syscall_get_arguments(current, args->regs, 0, 1, &val);
+	len = ppm_copy_from_user(&uid, (void *)val, sizeof(uint32_t));
+	if (unlikely(len != 0))
+		return PPM_FAILURE_INVALID_USER_MEMORY;
+
+	res = val_to_ring(args, uid, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * euid
+	 */
+	syscall_get_arguments(current, args->regs, 1, 1, &val);
+	len = ppm_copy_from_user(&uid, (void *)val, sizeof(uint32_t));
+	if (unlikely(len != 0))
+		return PPM_FAILURE_INVALID_USER_MEMORY;
+
+	res = val_to_ring(args, uid, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * suid
+	 */
+	syscall_get_arguments(current, args->regs, 2, 1, &val);
+	len = ppm_copy_from_user(&uid, (void *)val, sizeof(uint32_t));
+	if (unlikely(len != 0))
+		return PPM_FAILURE_INVALID_USER_MEMORY;
+
+	res = val_to_ring(args, uid, 0, false, 0);
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 

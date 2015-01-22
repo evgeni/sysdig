@@ -24,6 +24,7 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #include <limits.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 #endif
 #include <third-party/tinydir.h>
 #include <json/json.h>
@@ -89,6 +90,8 @@ uint32_t lua_cbacks::rawval_to_lua_stack(lua_State *ls, uint8_t* rawval, const f
 			return 1;
 		case PT_FLAGS32:
 		case PT_UINT32:
+		case PT_UID:
+		case PT_GID:
 			lua_pushnumber(ls, *(uint32_t*)rawval);
 			return 1;
 		case PT_UINT64:
@@ -531,6 +534,31 @@ int lua_cbacks::is_tty(lua_State *ls)
 #endif
 
 	lua_pushboolean(ls, use_color);
+	return 1;
+}
+
+int lua_cbacks::get_terminal_info(lua_State *ls) 
+{
+	int32_t width = -1;
+	int32_t height = -1;
+#ifndef _WIN32
+	struct winsize w;
+
+	if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) != -1)
+	{
+		width = w.ws_col;
+		height = w.ws_row;
+	}
+#endif
+
+	lua_newtable(ls);
+	lua_pushstring(ls, "width");
+	lua_pushnumber(ls, width);
+	lua_settable(ls, -3);
+	lua_pushstring(ls, "height");
+	lua_pushnumber(ls, height);
+	lua_settable(ls, -3);
+
 	return 1;
 }
 

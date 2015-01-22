@@ -41,7 +41,10 @@ char* scap_getlasterr(scap_t* handle)
 	return handle->m_lasterr;
 }
 
-scap_t* scap_open_live(char *error)
+scap_t* scap_open_live_int(char *error, 
+						   proc_entry_callback proc_callback,
+						   void* proc_callback_context,
+						   bool import_users)
 {
 #if !defined(HAS_CAPTURE)
 	snprintf(error, SCAP_LASTERR_SIZE, "live capture not supported on %s", PLATFORM_NAME);
@@ -68,7 +71,6 @@ scap_t* scap_open_live(char *error)
 	// Preliminary initializations
 	//
 	memset(handle, 0, sizeof(scap_t));
-	handle->m_emptybuf_timeout_ms = BUFFER_EMPTY_WAIT_TIME_MS;
 
 	//
 	// Find out how many devices we have to open, which equals to the number of CPUs
@@ -99,6 +101,8 @@ scap_t* scap_open_live(char *error)
 	//
 	// Extract machine information
 	//
+	handle->m_proc_callback = proc_callback;
+	handle->m_proc_callback_context = proc_callback_context;
 	handle->m_machine_info.num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
 	handle->m_machine_info.memory_size_bytes = (uint64_t)sysconf(_SC_PHYS_PAGES) * sysconf(_SC_PAGESIZE);
 	gethostname(handle->m_machine_info.hostname, sizeof(handle->m_machine_info.hostname) / sizeof(handle->m_machine_info.hostname[0]));
@@ -120,11 +124,18 @@ scap_t* scap_open_live(char *error)
 	//
 	// Create the user list
 	//
-	if(scap_create_userlist(handle) != SCAP_SUCCESS)
+	if(import_users)
 	{
-		scap_close(handle);
-		snprintf(error, SCAP_LASTERR_SIZE, "error creating the interface list");
-		return NULL;
+		if(scap_create_userlist(handle) != SCAP_SUCCESS)
+		{
+			scap_close(handle);
+			snprintf(error, SCAP_LASTERR_SIZE, "error creating the interface list");
+			return NULL;
+		}
+	}
+	else
+	{
+		handle->m_userlist = NULL;		
 	}
 
 	//
@@ -226,7 +237,11 @@ scap_t* scap_open_live(char *error)
 #endif // HAS_CAPTURE
 }
 
-scap_t* scap_open_offline(const char* fname, char *error)
+scap_t* scap_open_offline_int(const char* fname, 
+							  char *error,
+							  proc_entry_callback proc_callback, 
+							  void* proc_callback_context,
+							  bool import_users)
 {
 	scap_t* handle = NULL;
 
@@ -243,6 +258,8 @@ scap_t* scap_open_offline(const char* fname, char *error)
 	//
 	// Preliminary initializations
 	//
+	handle->m_proc_callback = proc_callback;
+	handle->m_proc_callback_context = proc_callback_context;
 	handle->m_devs = NULL;
 	handle->m_ndevs = 0;
 	handle->m_proclist = NULL;
@@ -282,6 +299,15 @@ scap_t* scap_open_offline(const char* fname, char *error)
 		return NULL;
 	}
 
+	if(!import_users)
+	{
+		if(handle->m_userlist != NULL)
+		{
+			scap_free_userlist(handle->m_userlist);
+			handle->m_userlist = NULL;
+		}
+	}
+
 	//
 	// Add the fake process for kernel threads
 	//
@@ -292,15 +318,33 @@ scap_t* scap_open_offline(const char* fname, char *error)
 	snprintf(handle->m_fake_kernel_proc.exe, SCAP_MAX_PATH_SIZE, "kernel");
 	handle->m_fake_kernel_proc.args[0] = 0;
 
-//scap_proc_print_table(handle);
-
 	return handle;
 }
 
-int32_t scap_set_empty_buffer_timeout_ms(scap_t* handle, uint32_t timeout_ms)
+scap_t* scap_open_offline(const char* fname, char *error)
 {
-	handle->m_emptybuf_timeout_ms = timeout_ms;
-	return SCAP_SUCCESS;
+	return scap_open_offline_int(fname, error, NULL, NULL, true);
+}
+
+scap_t* scap_open_live(char *error)
+{
+	return scap_open_live_int(error, NULL, NULL, true);
+}
+
+scap_t* scap_open(scap_open_args args, char *error)
+{
+	if(args.fname != NULL)
+	{
+		return scap_open_offline_int(args.fname, error, 
+			args.proc_callback, args.proc_callback_context,
+			args.import_users);
+	}
+	else
+	{
+		return scap_open_live_int(error, args.proc_callback, 
+			args.proc_callback_context,
+			args.import_users);
+	}
 }
 
 void scap_close(scap_t* handle)
@@ -446,68 +490,12 @@ int32_t scap_readbuf(scap_t* handle, uint32_t cpuid, bool blocking, OUT char** b
 	}
 
 	//
-	// Does the user want to block?
+	// Read the pointers.
 	//
-	if(blocking)
-	{
-		//
-		// If we are asked to operate in blocking mode, keep waiting until at least
-		// MIN_USERSPACE_READ_SIZE bytes are in the buffer.
-		//
-		while(true)
-		{
-			get_buf_pointers(handle->m_devs[cpuid].m_bufinfo,
-			                 &thead,
-			                 &ttail,
-			                 &read_size);
-
-			if(read_size >= MIN_USERSPACE_READ_SIZE)
-			{
-				break;
-			}
-
-			usleep(BUFFER_EMPTY_WAIT_TIME_MS * 1000);
-		}
-	}
-	else
-	{
-		//
-		// If we are not asked to block, read the pointers and keep going.
-		//
-		get_buf_pointers(handle->m_devs[cpuid].m_bufinfo,
-		                 &thead,
-		                 &ttail,
-		                 &read_size);
-	}
-
-	//
-	// logic check
-	// XXX should probably be an assertion, but for the moment we want to print some meaningful info and
-	// stop the processing.
-	//
-	if((handle->m_devs[cpuid].m_bufinfo->tail + read_size) % RING_BUF_SIZE != thead)
-	{
-		snprintf(handle->m_lasterr,
-		         SCAP_LASTERR_SIZE,
-		         "buffer corruption. H=%u, T=%u, R=%u, S=%u (%u)",
-		         thead,
-		         handle->m_devs[cpuid].m_bufinfo->tail,
-		         read_size,
-		         RING_BUF_SIZE,
-		         (handle->m_devs[cpuid].m_bufinfo->tail + read_size) % RING_BUF_SIZE);
-		ASSERT(false);
-		return SCAP_FAILURE;
-	}
-
-#if 0
-	printf("%u)H:%u T:%u Used:%u Free:%u Size=%u\n",
-	       cpuid,
-	       thead,
-	       ttail,
-	       read_size,
-	       (uint32_t)(RING_BUF_SIZE - read_size - 1),
-	       (uint32_t)RING_BUF_SIZE);
-#endif
+	get_buf_pointers(handle->m_devs[cpuid].m_bufinfo,
+	                 &thead,
+	                 &ttail,
+	                 &read_size);
 
 	//
 	// Remember read_size so we can update the tail at the next call
@@ -526,20 +514,26 @@ int32_t scap_readbuf(scap_t* handle, uint32_t cpuid, bool blocking, OUT char** b
 bool check_scap_next_wait(scap_t* handle)
 {
 	uint32_t j;
+	bool res = true;
 
 	for(j = 0; j < handle->m_ndevs; j++)
 	{
 		uint32_t thead;
 		uint32_t ttail;
-		uint32_t read_size;
+		scap_device* dev = &(handle->m_devs[j]);
 
-		get_buf_pointers(handle->m_devs[j].m_bufinfo, &thead, &ttail, &read_size);
+		get_buf_pointers(dev->m_bufinfo, &thead, &ttail, &dev->m_read_size);
 
-		if(read_size > 20000)
+		if(dev->m_read_size > 20000)
 		{
 			handle->m_n_consecutive_waits = 0;
-			return false;
+			res = false;
 		}
+	}
+
+	if(res == false)
+	{
+		return false;
 	}
 
 	if(handle->m_n_consecutive_waits >= MAX_N_CONSECUTIVE_WAITS)
@@ -551,6 +545,47 @@ bool check_scap_next_wait(scap_t* handle)
 	{
 		return true;
 	}
+}
+
+int32_t refill_read_buffers(scap_t* handle, bool wait)
+{
+	uint32_t j;
+	uint32_t ndevs = handle->m_ndevs;
+
+	if(wait)
+	{
+		if(check_scap_next_wait(handle))
+		{
+			usleep(BUFFER_EMPTY_WAIT_TIME_MS * 1000);
+			handle->m_n_consecutive_waits++;
+		}
+	}
+
+	//
+	// Refill our data for each of the devices
+	//
+	for(j = 0; j < ndevs; j++)
+	{
+		scap_device* dev = &(handle->m_devs[j]);
+
+		int32_t res = scap_readbuf(handle,
+		                           j,
+		                           false,
+		                           &dev->m_sn_next_event,
+		                           &dev->m_sn_len);
+
+		if(res != SCAP_SUCCESS)
+		{
+			return res;
+		}
+	}
+
+	//
+	// Note: we might return a spurious timeout here in case the previous loop extracted valid data to parse.
+	//       It's ok, since this is rare and the caller will just call us again after receiving a 
+	//       SCAP_TIMEOUT.
+	//
+	return SCAP_TIMEOUT;
 }
 
 #endif // HAS_CAPTURE
@@ -572,65 +607,37 @@ static int32_t scap_next_live(scap_t* handle, OUT scap_evt** pevent, OUT uint16_
 	uint64_t max_ts = 0xffffffffffffffffLL;
 	uint64_t max_buf_size = 0;
 	scap_evt* pe = NULL;
-	bool waited = false;
+	uint32_t ndevs = handle->m_ndevs;
 
 	*pcpuid = 65535;
 
-	for(j = 0; j < handle->m_ndevs; j++)
+	for(j = 0; j < ndevs; j++)
 	{
-		if(handle->m_devs[j].m_sn_len == 0)
+		scap_device* dev = &(handle->m_devs[j]);
+
+		if(dev->m_sn_len == 0)
 		{
-			//
-			// The buffer for this CPU is fully consumed.
-			// This is a good time to check if we should wait
-			//
-			if(handle->m_emptybuf_timeout_ms != 0)
-			{
-				if(check_scap_next_wait(handle) && !waited)
-				{
-					usleep(BUFFER_EMPTY_WAIT_TIME_MS * 1000);
-					waited = true;
-					handle->m_n_consecutive_waits++;
-				}
-			}
-
-			//
-			// read another buffer
-			//
-			int32_t res = scap_readbuf(handle,
-			                           j,
-			                           false,
-			                           &handle->m_devs[j].m_sn_next_event,
-			                           &handle->m_devs[j].m_sn_len);
-
-			if(res != SCAP_SUCCESS)
-			{
-				return res;
-			}
+			continue;
 		}
 
 		//
-		// Make sure that we have data
+		// Make sure that we have data from this ring
 		//
-		if(handle->m_devs[j].m_sn_len != 0)
+		if(dev->m_sn_len != 0)
 		{
-			if(handle->m_devs[j].m_sn_len > max_buf_size)
+			if(dev->m_sn_len > max_buf_size)
 			{
-				max_buf_size = handle->m_devs[j].m_sn_len;
+				max_buf_size = dev->m_sn_len;
 			}
 
 			//
 			// We want to consume the event with the lowest timestamp
 			//
-			pe = (scap_evt*)handle->m_devs[j].m_sn_next_event;
-
-#ifdef _DEBUG
-			ASSERT(pe->len == scap_event_compute_len(pe));
-#endif
+			pe = (scap_evt*)dev->m_sn_next_event;
 
 			if(pe->ts < max_ts)
 			{
-				if(pe->len > handle->m_devs[j].m_sn_len)
+				if(pe->len > dev->m_sn_len)
 				{
 					snprintf(handle->m_lasterr,	SCAP_LASTERR_SIZE, "scap_next buffer corruption");
 
@@ -659,16 +666,15 @@ static int32_t scap_next_live(scap_t* handle, OUT scap_evt** pevent, OUT uint16_
 		ASSERT(handle->m_devs[*pcpuid].m_sn_len >= (*pevent)->len);
 		handle->m_devs[*pcpuid].m_sn_len -= (*pevent)->len;
 		handle->m_devs[*pcpuid].m_sn_next_event += (*pevent)->len;
-
 		return SCAP_SUCCESS;
 	}
 	else
 	{
 		//
-		// This happens only when all the buffers are empty, which should be very rare.
-		// The caller want't receive an event, but shouldn't treat this as an error and should just retry.
+		// All the buffers have been consumed. Check if there's enough data to keep going or
+		// if we should wait.
 		//
-		return SCAP_TIMEOUT;
+		return refill_read_buffers(handle, true);
 	}
 #endif
 }
@@ -757,12 +763,6 @@ int32_t scap_stop_capture(scap_t* handle)
 			return SCAP_FAILURE;
 		}
 	}
-
-	//
-	// Since no new data is going to be produced, we disable read waits so that the remaining data
-	// can be consumd without slowdowns
-	//
-	handle->m_emptybuf_timeout_ms = 0;
 
 	return SCAP_SUCCESS;
 #endif // HAS_CAPTURE

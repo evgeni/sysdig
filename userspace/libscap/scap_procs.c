@@ -263,6 +263,7 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 	FILE* f;
 	size_t filesize;
 	size_t exe_len;
+	bool free_tinfo = false;
 
 	snprintf(dir_name, sizeof(dir_name), "%s/%u/", procdirname, tid);
 	snprintf(filename, sizeof(filename), "%sexe", dir_name);
@@ -299,8 +300,6 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 			fclose(f);
 		}
 	}
-
-	target_name[target_res] = 0;
 
 	//
 	// This is a real user level process. Allocate the procinfo structure.
@@ -340,8 +339,6 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 	{
 		tinfo->flags = PPM_CL_CLONE_THREAD | PPM_CL_CLONE_FILES;
 	}
-
-	snprintf(tinfo->exe, SCAP_MAX_PATH_SIZE, "%s", target_name);
 
 	//
 	// Gather the command name
@@ -386,25 +383,31 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 	}
 	else
 	{
-		ASSERT(sizeof(line) >= SCAP_MAX_PATH_SIZE);
+		ASSERT(sizeof(line) >= SCAP_MAX_ARGS_SIZE);
 
-		filesize = fread(line, 1, SCAP_MAX_PATH_SIZE, f);
-		line[filesize - 1] = 0;
-
-		exe_len = strlen(line);
-		if(exe_len < filesize)
+		filesize = fread(line, 1, SCAP_MAX_ARGS_SIZE - 1, f);
+		if(filesize > 0)
 		{
-			++exe_len;
-		}
+			line[filesize] = 0;
 
-		tinfo->args_len = filesize - exe_len;
-		if(tinfo->args_len > SCAP_MAX_ARGS_SIZE)
+			exe_len = strlen(line);
+			if(exe_len < filesize)
+			{
+				++exe_len;
+			}
+
+			snprintf(tinfo->exe, SCAP_MAX_PATH_SIZE, "%s", line);
+
+			tinfo->args_len = filesize - exe_len;
+
+			memcpy(tinfo->args, line + exe_len, tinfo->args_len);
+			tinfo->args[SCAP_MAX_ARGS_SIZE - 1] = 0;
+		}
+		else
 		{
-			tinfo->args_len = SCAP_MAX_ARGS_SIZE;
+			tinfo->args[0] = 0;
+			tinfo->exe[0] = 0;
 		}
-
-		memcpy(tinfo->args, line + exe_len, tinfo->args_len);
-		tinfo->args[SCAP_MAX_ARGS_SIZE - 1] = 0;
 
 		fclose(f);
 	}
@@ -426,16 +429,20 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 		ASSERT(sizeof(line) >= SCAP_MAX_ENV_SIZE);
 
 		filesize = fread(line, 1, SCAP_MAX_ENV_SIZE, f);
-		line[filesize - 1] = 0;
 
-		tinfo->env_len = filesize;
-		if(tinfo->env_len > SCAP_MAX_ENV_SIZE)
+		if(filesize > 0)
 		{
-			tinfo->env_len = SCAP_MAX_ENV_SIZE;
-		}
+			line[filesize - 1] = 0;
 
-		memcpy(tinfo->env, line, tinfo->env_len);
-		tinfo->env[SCAP_MAX_ENV_SIZE - 1] = 0;
+			tinfo->env_len = filesize;
+
+			memcpy(tinfo->env, line, tinfo->env_len);
+			tinfo->env[SCAP_MAX_ENV_SIZE - 1] = 0;
+		}
+		else
+		{
+			tinfo->env[0] = 0;
+		}
 
 		fclose(f);
 	}
@@ -477,13 +484,21 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 	if(tid_to_scan == -1)
 	{
 		//
-		// Done. Add the entry to the process table
+		// Done. Add the entry to the process table, or fire the notification callback
 		//
-		HASH_ADD_INT64(handle->m_proclist, tid, tinfo);
-		if(uth_status != SCAP_SUCCESS)
+		if(handle->m_proc_callback == NULL)
 		{
-			snprintf(error, SCAP_LASTERR_SIZE, "process table allocation error (2)");
-			return SCAP_FAILURE;
+			HASH_ADD_INT64(handle->m_proclist, tid, tinfo);
+			if(uth_status != SCAP_SUCCESS)
+			{
+				snprintf(error, SCAP_LASTERR_SIZE, "process table allocation error (2)");
+				return SCAP_FAILURE;
+			}
+		}
+		else
+		{
+			handle->m_proc_callback(handle->m_proc_callback_context, tinfo->tid, tinfo, NULL, handle);
+			free_tinfo = true;
 		}
 	}
 	else
@@ -497,6 +512,11 @@ int32_t scap_proc_add_from_proc(scap_t* handle, uint32_t tid, int parenttid, int
 	if(-1 == parenttid)
 	{
 		return scap_fd_scan_fd_dir(handle, dir_name, tinfo, sockets, error);
+	}
+
+	if(free_tinfo)
+	{
+		free(tinfo);
 	}
 
 	return SCAP_SUCCESS;
@@ -684,6 +704,45 @@ struct scap_threadinfo* scap_proc_get(scap_t* handle, int64_t tid, bool scan_soc
 	}
 
 	return tinfo;
+#endif // HAS_CAPTURE
+}
+
+bool scap_is_thread_alive(scap_t* handle, int64_t pid, int64_t tid, const char* comm)
+{
+#if !defined(HAS_CAPTURE)
+	return false;
+#else
+	char charbuf[SCAP_MAX_PATH_SIZE];
+	FILE* f;
+
+	//
+	// No /proc parsing for offline captures
+	//
+	if(handle->m_file)
+	{
+		ASSERT(false);
+		return false;
+	}
+
+	snprintf(charbuf, sizeof(charbuf), "/proc/%" PRId64 "/task/%" PRId64 "/comm", pid, tid);
+
+	f = fopen(charbuf, "r");
+
+	if(f != NULL)
+	{
+		if(fgets(charbuf, sizeof(charbuf), f) != NULL)
+		{
+			if(strncmp(charbuf, comm, strlen(comm)) == 0)
+			{
+				fclose(f);
+				return true;
+			}
+		}
+
+		fclose(f);
+	}
+
+	return false;
 #endif // HAS_CAPTURE
 }
 

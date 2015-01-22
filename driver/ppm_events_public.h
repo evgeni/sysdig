@@ -30,7 +30,7 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 /*
  * Limits
  */
-#define PPM_MAX_EVENT_PARAMS 16	/* Max number of parameters an event can have */
+#define PPM_MAX_EVENT_PARAMS 17	/* Max number of parameters an event can have */
 #define PPM_MAX_PATH_SIZE 256	/* Max size that an event parameter can have in the circular buffer, in bytes */
 #define PPM_MAX_NAME_LEN 32
 
@@ -121,6 +121,8 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #define PPM_CL_NAME_CHANGED (1 << 17)	/* libsinsp-specific flag. Set when the thread name changes */
 										/* (for example because execve was called) */
 #define PPM_CL_CLOSED (1 << 18)			/* thread has been closed. */
+#define PPM_CL_ACTIVE (1 << 19)			/* libsinsp-specific flag. Set in the first non-clone event for 
+										   this thread. */
 
 /*
  * Futex Operations
@@ -316,6 +318,46 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #define PPM_SPLICE_F_NONBLOCK	(1 << 1)
 #define PPM_SPLICE_F_MORE		(1 << 2)
 #define PPM_SPLICE_F_GIFT		(1 << 3)
+
+/*
+ * quotactl cmds
+ */
+#define PPM_Q_QUOTAON		(1 << 0)
+#define PPM_Q_QUOTAOFF		(1 << 1)
+#define PPM_Q_GETFMT		(1 << 2)
+#define PPM_Q_GETINFO		(1 << 3)
+#define PPM_Q_SETINFO		(1 << 4)
+#define PPM_Q_GETQUOTA		(1 << 5)
+#define PPM_Q_SETQUOTA		(1 << 6)
+#define PPM_Q_SYNC			(1 << 7)
+#define PPM_Q_XQUOTAON		(1 << 8)
+#define PPM_Q_XQUOTAOFF		(1 << 9)
+#define PPM_Q_XGETQUOTA		(1 << 10)
+#define PPM_Q_XSETQLIM		(1 << 11)
+#define PPM_Q_XGETQSTAT		(1 << 12)
+#define PPM_Q_XQUOTARM		(1 << 13)
+#define PPM_Q_XQUOTASYNC	(1 << 14)
+#define PPM_Q_XGETQSTATV	(1 << 15)
+
+/*
+ * quotactl types
+ */
+#define PPM_USRQUOTA		(1 << 0)
+#define PPM_GRPQUOTA		(1 << 1)
+
+/*
+ * quotactl dqi_flags
+ */
+#define PPM_DQF_NONE		(1 << 0)
+#define PPM_V1_DQF_RSQUASH	(1 << 1)
+
+/*
+ * quotactl quotafmts
+ */
+#define PPM_QFMT_NOT_USED		(1 << 0)
+#define PPM_QFMT_VFS_OLD	(1 << 1)
+#define PPM_QFMT_VFS_V0		(1 << 2)
+#define PPM_QFMT_VFS_V1		(1 << 3)
 
 /*
  * SuS says limits have to be unsigned.
@@ -536,7 +578,43 @@ enum ppm_event_type {
 	PPME_SYSCALL_FORK_X = 183,
 	PPME_SYSCALL_VFORK_E = 184,
 	PPME_SYSCALL_VFORK_X = 185,
-	PPM_EVENT_MAX = 186
+	PPME_PROCEXIT_1_E = 186,
+	PPME_PROCEXIT_1_X = 187,	/* This should never be called */
+	PPME_SYSCALL_SENDFILE_E = 188,
+	PPME_SYSCALL_SENDFILE_X = 189,	/* This should never be called */
+	PPME_SYSCALL_QUOTACTL_E = 190,
+	PPME_SYSCALL_QUOTACTL_X = 191,
+	PPME_SYSCALL_SETRESUID_E = 192,
+	PPME_SYSCALL_SETRESUID_X = 193,
+	PPME_SYSCALL_SETRESGID_E = 194,
+	PPME_SYSCALL_SETRESGID_X = 195,
+	PPME_SYSDIGEVENT_E = 196,
+	PPME_SYSDIGEVENT_X = 197, /* This should never be called */
+	PPME_SYSCALL_SETUID_E = 198,
+	PPME_SYSCALL_SETUID_X = 199,
+	PPME_SYSCALL_SETGID_E = 200,
+	PPME_SYSCALL_SETGID_X = 201,
+	PPME_SYSCALL_GETUID_E = 202,
+	PPME_SYSCALL_GETUID_X = 203,
+	PPME_SYSCALL_GETEUID_E = 204,
+	PPME_SYSCALL_GETEUID_X = 205,
+	PPME_SYSCALL_GETGID_E = 206,
+	PPME_SYSCALL_GETGID_X = 207,
+	PPME_SYSCALL_GETEGID_E = 208,
+	PPME_SYSCALL_GETEGID_X = 209,
+	PPME_SYSCALL_GETRESUID_E = 210,
+	PPME_SYSCALL_GETRESUID_X = 211,
+	PPME_SYSCALL_GETRESGID_E = 212,
+	PPME_SYSCALL_GETRESGID_X = 213,
+	PPME_SYSCALL_EXECVE_15_E = 214,
+	PPME_SYSCALL_EXECVE_15_X = 215,
+	PPME_SYSCALL_CLONE_17_E = 216,
+	PPME_SYSCALL_CLONE_17_X = 217,
+	PPME_SYSCALL_FORK_17_E = 218,
+	PPME_SYSCALL_FORK_17_X = 219,
+	PPME_SYSCALL_VFORK_17_E = 220,
+	PPME_SYSCALL_VFORK_17_X = 221,
+	PPM_EVENT_MAX = 222
 };
 /*@}*/
 
@@ -849,7 +927,16 @@ enum ppm_syscall_code {
 	PPM_SC_PROCESS_VM_WRITEV = 302,
 	PPM_SC_FORK = 303,
 	PPM_SC_VFORK = 304,
-	PPM_SC_MAX = 305,
+	PPM_SC_SETUID32 = 305,
+	PPM_SC_GETUID32 = 306,
+	PPM_SC_SETGID32 = 307,
+	PPM_SC_GETEUID32 = 308,
+	PPM_SC_GETGID32 = 309,
+	PPM_SC_SETRESUID32 = 310,
+	PPM_SC_SETRESGID32 = 311,
+	PPM_SC_GETRESUID32 = 312,
+	PPM_SC_GETRESGID32 = 313,
+	PPM_SC_MAX = 314,
 };
 
 /*
@@ -941,6 +1028,8 @@ enum ppm_param_type {
 	PT_FLAGS8 = 28, /* this is an UINT8, but will be interpreted as 8 bit flags. */
 	PT_FLAGS16 = 29, /* this is an UINT16, but will be interpreted as 16 bit flags. */
 	PT_FLAGS32 = 30, /* this is an UINT32, but will be interpreted as 32 bit flags. */
+	PT_UID = 31, /* this is an UINT32, MAX_UINT32 will be interpreted as no value */
+	PT_GID = 32 /* this is an UINT32, MAX_UINT32 will be interpreted as no value */
 };
 
 enum ppm_print_format {
@@ -1044,7 +1133,21 @@ extern const struct ppm_name_value ptrace_requests[];
 extern const struct ppm_name_value prot_flags[];
 extern const struct ppm_name_value mmap_flags[];
 extern const struct ppm_name_value splice_flags[];
+extern const struct ppm_name_value quotactl_cmds[];
+extern const struct ppm_name_value quotactl_types[];
+extern const struct ppm_name_value quotactl_dqi_flags[];
+extern const struct ppm_name_value quotactl_quota_fmts[];
 
 extern const struct ppm_param_info ptrace_dynamic_param[];
+
+/*
+ * Driver event notification ID
+ */
+enum ppm_driver_event_id {
+	DEI_NONE = 0,
+	DEI_DISABLE_DROPPING = 1,
+	DEI_ENABLE_DROPPING = 2,
+};
+
 
 #endif /* EVENTS_PUBLIC_H_ */

@@ -92,13 +92,16 @@ OPTIONS
   run the specified chisel. If the chisel require arguments, they must be specified in the command line after the name.
   
 **-cl**, **--list-chisels**  
-  lists the available chisels. Looks for chisels in ., ./chisels, ~/.chisels and /usr/share/sysdig/chisels.
+  lists the available chisels. Looks for chisels in ./chisels, ~/.chisels and /usr/share/sysdig/chisels.
   
 **-d**, **--displayflt**  
   Make the given filter a display one. Setting this option causes the events to be filtered after being parsed by the state system. Events are normally filtered before being analyzed, which is more efficient, but can cause state (e.g. FD names) to be lost.
   
 **-D**, **--debug**
   Capture events about sysdig itself
+
+**-E**, **--exclude-users**  
+  Don't create the user/group tables by querying the OS when sysdig starts. This also means that no user or group info will be written to the tracefile by the -w flag. The user/group tables are necessary to use filter fields like user.name or group.name. However, creating them can increase sysdig's startup time. Moreover, they contain information that could be privacy sensitive.  
 
 **-F**, **--fatfile**
   Enable fatfile mode. When writing in fatfile mode, the output file will contain events that will be invisible when reading the file, but that are necessary to fully reconstruct the state. Fatfile mode is useful when saving events to disk with an aggressive filter. The filter could drop events that would the state to be updated (e.g. clone() or open()). With fatfile mode, those events are still saved to file, but 'hidden' so that they won't appear when reading the file. Be aware that using this flag might generate substantially bigger traces files.
@@ -141,9 +144,9 @@ OPTIONS
 
 **-t** _timetype_, **--timetype**=_timetype_  
   Change the way event time is displayed. Accepted values are **h** for human-readable string, **a** for absolute timestamp from epoch, **r** for relative time from the beginning of the capture, **d** for delta between event enter and exit, and **D** for delta from the previous event.
-   
+     
 **-v**, **--verbose**  
-  Verbose output.
+  Verbose output. This flag will cause the full content of text and binary buffers to be printed on screen, instead of being truncated to 40 characters. Note that data buffers length is still limited by the snaplen (refer to the -s flag documentation) -v will also make sysdig print some summary information at the end of the capture.
   
 **--version**  
   Print version number.

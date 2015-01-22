@@ -96,7 +96,7 @@ static void usage()
 "                    run the specified chisel. If the chisel require arguments,\n"
 "                    they must be specified in the command line after the name.\n"
 " -cl, --list-chisels\n"
-"                    lists the available chisels. Looks for chisels in .,\n"
+"                    lists the available chisels. Looks for chisels in\n"
 "                    ./chisels, ~/.chisels and /usr/share/sysdig/chisels.\n"
 #endif
 #ifndef DISABLE_CGW
@@ -115,6 +115,14 @@ static void usage()
 "                    normally filtered before being analyzed, which is more\n"
 "                    efficient, but can cause state (e.g. FD names) to be lost.\n"
 " -D, --debug        Capture events about sysdig itself\n"
+" -E, --exclude-users\n"
+"                    Don't create the user/group tables by querying the OS when\n"
+"                    sysdig starts. This also means that no user or group info\n"
+"                    will be written to the tracefile by the -w flag.\n"
+"                    The user/group tables are necessary to use filter fields\n"
+"                    like user.name or group.name. However, creating them can\n"
+"                    increase sysdig's startup time. Moreover, they contain\n"
+"                    information that could be privacy sensitive.\n"
 " -F, --fatfile	     Enable fatfile mode\n"
 "                    when writing in fatfile mode, the output file will contain\n"
 "                    events that will be invisible when reading the file, but\n"
@@ -172,6 +180,12 @@ static void usage()
 "                    capture, d for delta between event enter and exit, and\n"
 "                    D for delta from the previous event.\n"
 " -v, --verbose      Verbose output.\n"
+"                    This flag will cause the full content of text and binary\n"
+"                    buffers to be printed on screen, instead of being truncated\n"
+"                    to 40 characters. Note that data buffers length is still\n"
+"                    limited by the snaplen (refer to the -s flag documentation)\n"
+"                    -v will also make sysdig print some summary information at\n"
+"                    the end of the capture.\n"
 " --version          Print version number.\n"
 " -w <writefile>, --write=<writefile>\n"
 "                    Write the captured events to <writefile>.\n"
@@ -678,9 +692,9 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 		{"chisel", required_argument, 0, 'c' },
 		{"list-chisels", no_argument, &cflag, 1 },
 #endif
-		{"compress", no_argument, 0, 'z' },
 		{"displayflt", no_argument, 0, 'd' },
 		{"debug", no_argument, 0, 'D'},
+		{"exclude-users", no_argument, 0, 'E' },
 		{"fatfile", no_argument, 0, 'F'},
 #ifndef DISABLE_CGW
 		{"seconds", required_argument, 0, 'G' },
@@ -711,6 +725,7 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 #endif
 		{"print-hex", no_argument, 0, 'x'},
 		{"print-hex-ascii", no_argument, 0, 'X'},
+		{"compress", no_argument, 0, 'z' },
 		{0, 0, 0, 0}
 	};
 
@@ -733,7 +748,7 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 #ifndef DISABLE_CGW
                                         "C:"
 #endif
-                                        "dDF"
+                                        "dDEF"
 #ifndef DISABLE_CGW
                                         "G:"
 #endif
@@ -825,6 +840,9 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 
 			case 'D':
 				inspector->set_debug_mode(true);
+				break;
+			case 'E':
+				inspector->set_import_users(false);
 				break;
 			case 'F':
 				inspector->set_fatfile_dump_mode(true);
@@ -1130,6 +1148,14 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 		// Create the event formatter
 		//
 		sinsp_evt_formatter formatter(inspector, output_format);
+
+		//
+		// Set output buffers len
+		//
+		if(!verbose && g_chisels.size() == 0)
+		{
+			inspector->set_max_evt_output_len(80);
+		}
 
 		for(uint32_t j = 0; j < infiles.size() || infiles.size() == 0; j++)
 		{

@@ -79,8 +79,8 @@ private:
 	void parse_close_enter(sinsp_evt* evt);
 	void parse_close_exit(sinsp_evt* evt);
 	void parse_thread_exit(sinsp_evt* evt);
-	void parse_rw_enter(sinsp_evt* evt);
 	void parse_rw_exit(sinsp_evt* evt);
+	void parse_sendfile_exit(sinsp_evt* evt);
 	void parse_eventfd_exit(sinsp_evt* evt);
 	void parse_bind_exit(sinsp_evt* evt);
 	void parse_chdir_exit(sinsp_evt* evt);
@@ -98,6 +98,10 @@ private:
 	void parse_fcntl_exit(sinsp_evt* evt);
 	void parse_context_switch(sinsp_evt* evt);
 	void parse_brk_munmap_mmap_exit(sinsp_evt* evt);
+	void parse_setresuid_exit(sinsp_evt* evt);
+	void parse_setresgid_exit(sinsp_evt* evt);
+	void parse_setuid_exit(sinsp_evt* evt);
+	void parse_setgid_exit(sinsp_evt* evt);
 
 	inline void add_socket(sinsp_evt* evt, int64_t fd, uint32_t domain, uint32_t type, uint32_t protocol);
 	inline void add_pipe(sinsp_evt *evt, int64_t tid, int64_t fd, uint64_t ino);

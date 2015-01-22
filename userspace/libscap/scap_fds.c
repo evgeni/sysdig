@@ -524,20 +524,24 @@ int32_t scap_add_fd_to_proc_table(scap_t *handle, scap_threadinfo *tinfo, scap_f
 		//
 		HASH_DEL(tinfo->fdlist, tfdi);
 		free(tfdi);
-
-		//      ASSERT(false);
-		//      snprintf(handle->m_lasterr, SCAP_LASTERR_SIZE, "duplicate fd %"PRIu64"for process%"PRIu64, fdi->fd, tinfo->tid);
-		//      return SCAP_FAILURE;
 	}
 
 	//
-	// Add the fd to the table
+	// Add the fd to the table, or fire the notification callback
 	//
-	HASH_ADD_INT64(tinfo->fdlist, fd, fdi);
-	if(uth_status != SCAP_SUCCESS)
+	if(handle->m_proc_callback == NULL)
 	{
-		snprintf(handle->m_lasterr, SCAP_LASTERR_SIZE, "process table allocation error (2)");
-		return SCAP_FAILURE;
+		HASH_ADD_INT64(tinfo->fdlist, fd, fdi);
+		if(uth_status != SCAP_SUCCESS)
+		{
+			snprintf(handle->m_lasterr, SCAP_LASTERR_SIZE, "process table allocation error (2)");
+			return SCAP_FAILURE;
+		}
+	}
+	else
+	{
+		handle->m_proc_callback(handle->m_proc_callback_context, tinfo->tid, tinfo, fdi, handle);
+		free(fdi);
 	}
 
 	return SCAP_SUCCESS;
@@ -578,7 +582,6 @@ int32_t scap_fd_handle_regular_file(scap_t *handle, char *fname, scap_threadinfo
 {
 	char link_name[1024];
 	ssize_t r;
-	int32_t res;
 
 	r = readlink(fname, link_name, 1024);
 	if (r <= 0)
@@ -623,8 +626,7 @@ int32_t scap_fd_handle_regular_file(scap_t *handle, char *fname, scap_threadinfo
 		strncpy(fdi->info.fname, link_name, SCAP_MAX_PATH_SIZE);
 	}
 
-	res = scap_add_fd_to_proc_table(handle, tinfo, fdi);
-	return res;
+	return scap_add_fd_to_proc_table(handle, tinfo, fdi);
 }
 
 int32_t scap_fd_handle_socket(scap_t *handle, char *fname, scap_threadinfo *tinfo, scap_fdinfo *fdi, scap_fdinfo **sockets, char *error)
@@ -793,8 +795,8 @@ int32_t scap_fd_read_unix_sockets_from_proc_fs(scap_t *handle, scap_fdinfo **soc
 		HASH_ADD_INT64((*sockets), ino, fdinfo);
 		if(uth_status != SCAP_SUCCESS)
 		{
-			// TODO: set some error message
-			break;
+			snprintf(handle->m_lasterr, SCAP_LASTERR_SIZE, "unix socket allocation error");
+			return SCAP_FAILURE;
 		}
 	}
 	fclose(f);
@@ -1282,7 +1284,6 @@ int32_t scap_fd_scan_fd_dir(scap_t *handle, char *procdir, scap_threadinfo *tinf
 	struct stat sb;
 	uint64_t fd;
 	scap_fdinfo *fdi = NULL;
-
 	snprintf(fd_dir_name, 1024, "%sfd", procdir);
 	dir_p = opendir(fd_dir_name);
 	if(dir_p == NULL)
@@ -1341,8 +1342,11 @@ int32_t scap_fd_scan_fd_dir(scap_t *handle, char *procdir, scap_threadinfo *tinf
 			if(fdi->type == SCAP_FD_UNKNOWN)
 			{
 				// we can land here if we've got a netlink socket
-				scap_fd_free_fdinfo(&fdi);
-			}
+				if(handle->m_proc_callback == NULL)
+				{
+					scap_fd_free_fdinfo(&fdi);
+				}
+			} 
 			break;
 		default:
 			res = scap_fd_allocate_fdinfo(handle, &fdi, fd, SCAP_FD_UNSUPPORTED);
@@ -1353,10 +1357,6 @@ int32_t scap_fd_scan_fd_dir(scap_t *handle, char *procdir, scap_threadinfo *tinf
 			fdi->ino = sb.st_ino;
 			res = scap_fd_handle_regular_file(handle, f_name, tinfo, fdi, error);
 			break;
-		}
-		if(NULL != fdi)
-		{
-			ASSERT(SCAP_FD_UNKNOWN != fdi->type);
 		}
 		if(SCAP_SUCCESS != res)
 		{

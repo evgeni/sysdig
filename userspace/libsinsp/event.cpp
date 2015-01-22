@@ -21,7 +21,11 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #include <inttypes.h>
 #include <sys/socket.h>
 #include <algorithm>
+#else
+#define NOMINMAX
 #endif
+
+#include <limits>
 
 #include "sinsp.h"
 #include "sinsp_int.h"
@@ -50,15 +54,6 @@ extern sinsp_evttables g_infotables;
 } while(0)
 
 ///////////////////////////////////////////////////////////////////////////////
-// sinsp_evt_param implementation
-///////////////////////////////////////////////////////////////////////////////
-void sinsp_evt_param::init(char *valptr, uint16_t len)
-{
-	m_val = valptr;
-	m_len = len;
-}
-
-///////////////////////////////////////////////////////////////////////////////
 // sinsp_evt implementation
 ///////////////////////////////////////////////////////////////////////////////
 sinsp_evt::sinsp_evt() :
@@ -69,6 +64,7 @@ sinsp_evt::sinsp_evt() :
 #ifdef _DEBUG
 	m_filtered_out = false;
 #endif
+	m_event_info_table = g_infotables.m_event_info;
 }
 
 sinsp_evt::sinsp_evt(sinsp *inspector) :
@@ -80,51 +76,11 @@ sinsp_evt::sinsp_evt(sinsp *inspector) :
 #ifdef _DEBUG
 	m_filtered_out = false;
 #endif
+	m_event_info_table = g_infotables.m_event_info;
 }
 
 sinsp_evt::~sinsp_evt()
 {
-}
-
-void sinsp_evt::init()
-{
-	m_params_loaded = false;
-	m_info = scap_event_getinfo(m_pevt);
-	m_tinfo = NULL;
-	m_fdinfo = NULL;
-	m_iosize = 0;
-}
-
-void sinsp_evt::init(uint8_t *evdata, uint16_t cpuid)
-{
-	m_params_loaded = false;
-	m_pevt = (scap_evt *)evdata;
-	m_info = scap_event_getinfo(m_pevt);
-	m_tinfo = NULL;
-	m_fdinfo = NULL;
-	m_iosize = 0;
-	m_cpuid = cpuid;
-	m_evtnum = 0;
-}
-
-uint64_t sinsp_evt::get_num()
-{
-	return m_evtnum;
-}
-
-int16_t sinsp_evt::get_cpuid()
-{
-	return m_cpuid;
-}
-
-uint16_t sinsp_evt::get_type()
-{
-	return m_pevt->type;
-}
-
-ppm_event_flags sinsp_evt::get_flags()
-{
-	return m_info->flags;
 }
 
 uint64_t sinsp_evt::get_ts()
@@ -1202,6 +1158,21 @@ Json::Value sinsp_evt::get_param_as_json(uint32_t id, OUT const char** resolved_
 
 			break;
 		}
+	case PT_UID:
+	case PT_GID:
+	{
+		ASSERT(payload_len == sizeof(uint32_t));
+		uint32_t val = *(uint32_t *)payload;
+		if(val < std::numeric_limits<uint32_t>::max() )
+		{
+			ret = val;
+		}
+		else
+		{
+			ret = -1;
+		}
+		break;
+	}
 	case PT_ABSTIME:
 		//
 		// XXX not implemented yet
@@ -1483,7 +1454,25 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 				continue;
 			}
 
-			m_rawbuf_str_len = blen;
+			ASSERT(m_inspector != NULL);
+			if(m_inspector->m_max_evt_output_len != 0)
+			{
+				uint32_t real_len = MIN(blen, m_inspector->m_max_evt_output_len);
+
+				m_rawbuf_str_len = real_len;
+				if(real_len > 3)
+				{
+					m_paramstr_storage[real_len - 3] = '.';
+					m_paramstr_storage[real_len - 2] = '.';
+					m_paramstr_storage[real_len - 1] = '.';
+				}
+
+				m_paramstr_storage[real_len] = 0;
+			}
+			else
+			{
+				m_rawbuf_str_len = blen;
+			}
 
 			break;
 		}
@@ -1821,6 +1810,72 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 		         m_paramstr_storage.size(),
 		         "INVALID DYNAMIC PARAMETER");
 		break;
+	case PT_UID:
+	{
+		uint32_t val = *(uint32_t *)payload;
+		if (val < std::numeric_limits<uint32_t>::max())
+		{
+			snprintf(&m_paramstr_storage[0],
+					 m_paramstr_storage.size(),
+					 "%d", val);
+			auto find_it = m_inspector->get_userlist()->find(val);
+			if (find_it != m_inspector->get_userlist()->end())
+			{
+				scap_userinfo* user_info = find_it->second;
+				strcpy_sanitized(&m_resolved_paramstr_storage[0], user_info->name,
+								(uint32_t)m_resolved_paramstr_storage.size());
+			}
+			else
+			{
+				snprintf(&m_resolved_paramstr_storage[0],
+						m_resolved_paramstr_storage.size(),
+						"<NA>");
+			}
+		}
+		else
+		{
+			snprintf(&m_paramstr_storage[0],
+					 m_paramstr_storage.size(),
+					 "-1");
+			snprintf(&m_resolved_paramstr_storage[0],
+					m_resolved_paramstr_storage.size(),
+					"<NONE>");
+		}
+		break;
+	}
+	case PT_GID:
+	{
+		uint32_t val = *(uint32_t *)payload;
+		if (val < std::numeric_limits<uint32_t>::max())
+		{
+			snprintf(&m_paramstr_storage[0],
+					 m_paramstr_storage.size(),
+					 "%d", val);
+			auto find_it = m_inspector->get_grouplist()->find(val);
+			if (find_it != m_inspector->get_grouplist()->end())
+			{
+				scap_groupinfo* group_info = find_it->second;
+				strcpy_sanitized(&m_resolved_paramstr_storage[0], group_info->name,
+								(uint32_t)m_resolved_paramstr_storage.size());
+			}
+			else
+			{
+				snprintf(&m_resolved_paramstr_storage[0],
+						m_resolved_paramstr_storage.size(),
+						"<NA>");
+			}
+		}
+		else
+		{
+			snprintf(&m_paramstr_storage[0],
+					 m_paramstr_storage.size(),
+					 "-1");
+			snprintf(&m_resolved_paramstr_storage[0],
+					m_resolved_paramstr_storage.size(),
+					"<NONE>");
+		}
+		break;
+	}
 	default:
 		ASSERT(false);
 		snprintf(&m_paramstr_storage[0],
@@ -1911,29 +1966,10 @@ const sinsp_evt_param* sinsp_evt::get_param_value_raw(const char* name)
 	return NULL;
 }
 
-void sinsp_evt::load_params()
-{
-	uint32_t j;
-	uint32_t nparams;
-	sinsp_evt_param par;
-
-	nparams = m_info->nparams;
-	uint16_t *lens = (uint16_t *)((char *)m_pevt + sizeof(struct ppm_evt_hdr));
-	char *valptr = (char *)lens + nparams * sizeof(uint16_t);
-	m_params.clear();
-
-	for(j = 0; j < nparams; j++)
-	{
-		par.init(valptr, lens[j]);
-		m_params.push_back(par);
-		valptr += lens[j];
-	}
-}
-
 void sinsp_evt::get_category(OUT sinsp_evt::category* cat)
 {
-	if(get_type() == PPME_GENERIC_E ||
-		get_type() == PPME_GENERIC_X)
+	if(m_pevt->type == PPME_GENERIC_E ||
+		m_pevt->type == PPME_GENERIC_X)
 	{
 		//
 		// This event is a syscall that doesn't have a filler yet.

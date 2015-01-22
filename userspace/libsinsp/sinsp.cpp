@@ -43,6 +43,9 @@ extern sinsp_evttables g_infotables;
 extern vector<chiseldir_info>* g_chisel_dirs;
 #endif
 
+void on_new_entry_from_proc(void* context, int64_t tid, scap_threadinfo* tinfo, 
+							scap_fdinfo* fdinfo, scap_t* newhandle); 
+
 ///////////////////////////////////////////////////////////////////////////////
 // sinsp implementation
 ///////////////////////////////////////////////////////////////////////////////
@@ -71,7 +74,9 @@ sinsp::sinsp() :
 
 	m_fds_to_remove = new vector<int64_t>;
 	m_machine_info = NULL;
+#ifdef SIMULATE_DROP_MODE
 	m_isdropping = false;
+#endif
 	m_n_proc_lookups = 0;
 	m_max_n_proc_lookups = 0;
 	m_max_n_proc_socket_lookups = 0;
@@ -79,7 +84,9 @@ sinsp::sinsp() :
 	m_buffer_format = sinsp_evt::PF_NORMAL;
 	m_isdebug_enabled = false;
 	m_isfatfile_enabled = false;
+	m_max_evt_output_len = 0;
 	m_filesize = -1;
+	m_import_users = true;
 }
 
 sinsp::~sinsp()
@@ -137,11 +144,6 @@ void sinsp::init()
 	add_protodecoders();
 
 	//
-	// Reset the thread manager
-	//
-	m_thread_manager->clear();
-
-	//
 	// Allocate the cycle writer
 	//
 	m_cycle_writer = new cycle_writer();
@@ -161,9 +163,24 @@ void sinsp::init()
 	m_fds_to_remove->clear();
 	m_n_proc_lookups = 0;
 
+	if(m_islive == false)
+	{
+		import_thread_table();
+	}
+
 	import_ifaddr_list();
-	import_thread_table();
+
 	import_user_list();
+
+	//
+	// Scan the list to create the proper parent/child dependencies
+	//
+	m_thread_manager->create_child_dependencies();
+
+	//
+	// Scan the list to fix the direction of the sockets
+	//
+	m_thread_manager->fix_sockets_coming_from_proc();
 
 #ifdef HAS_ANALYZER
 	//
@@ -184,6 +201,11 @@ void sinsp::init()
 	}
 }
 
+void sinsp::set_import_users(bool import_users)
+{
+	m_import_users = import_users;
+}
+
 void sinsp::open(uint32_t timeout_ms)
 {
 	char error[SCAP_LASTERR_SIZE];
@@ -191,7 +213,22 @@ void sinsp::open(uint32_t timeout_ms)
 	g_logger.log("starting live capture");
 
 	m_islive = true;
-	m_h = scap_open_live(error);
+
+	//
+	// Reset the thread manager
+	//
+	m_thread_manager->clear();
+
+	//
+	// Start the capture
+	//
+	scap_open_args oargs;
+	oargs.fname = NULL;
+	oargs.proc_callback = ::on_new_entry_from_proc;
+	oargs.proc_callback_context = this;
+	oargs.import_users = m_import_users;
+
+	m_h = scap_open(oargs, error);
 
 	if(m_h == NULL)
 	{
@@ -217,7 +254,21 @@ void sinsp::open(string filename)
 
 	g_logger.log("starting offline capture");
 
-	m_h = scap_open_offline(filename.c_str(), error);
+	//
+	// Reset the thread manager
+	//
+	m_thread_manager->clear();
+
+	//
+	// Start the capture
+	//
+	scap_open_args oargs;
+	oargs.fname = filename.c_str();
+	oargs.proc_callback = NULL;
+	oargs.proc_callback_context = NULL;
+	oargs.import_users = m_import_users;
+
+	m_h = scap_open(oargs, error);
 
 	if(m_h == NULL)
 	{
@@ -312,10 +363,79 @@ void sinsp::autodump_stop()
 	}
 }
 
+void sinsp::on_new_entry_from_proc(void* context, 
+								   int64_t tid, 
+								   scap_threadinfo* tinfo, 
+								   scap_fdinfo* fdinfo,
+								   scap_t* newhandle)
+{
+	ASSERT(tinfo != NULL);
+
+	//
+	// Retrieve machine information if we don't have it yet
+	//
+	if(m_machine_info == NULL)
+	{
+		m_machine_info = scap_get_machine_info(newhandle);
+		if(m_machine_info != NULL)
+		{
+			m_num_cpus = m_machine_info->num_cpus;
+		}
+		else
+		{
+			ASSERT(false);
+			m_num_cpus = 0;
+		}
+	}
+
+	//
+	// Add the thread or FD
+	//
+	if(fdinfo == NULL)
+	{
+		sinsp_threadinfo newti(this);
+		newti.init(tinfo);
+
+		m_thread_manager->add_thread(newti, true);
+	}
+	else
+	{
+		sinsp_threadinfo* sinsp_tinfo = find_thread(tid, true);
+
+		if(sinsp_tinfo == NULL)
+		{
+			sinsp_threadinfo newti(this);
+			newti.init(tinfo);
+
+			m_thread_manager->add_thread(newti, true);
+
+			sinsp_tinfo = find_thread(tid, true);
+			if(sinsp_tinfo == NULL)
+			{
+				ASSERT(false);
+				return;
+			}
+		}
+
+		sinsp_tinfo->add_fd(fdinfo);
+	}
+}
+
+void on_new_entry_from_proc(void* context, 
+							int64_t tid, 
+							scap_threadinfo* tinfo, 
+							scap_fdinfo* fdinfo,
+							scap_t* newhandle)
+{
+	sinsp* _this = (sinsp*)context;
+	_this->on_new_entry_from_proc(context, tid, tinfo, fdinfo, newhandle);
+}
+
 void sinsp::import_thread_table()
 {
 	scap_threadinfo *pi;
 	scap_threadinfo *tpi;
+	sinsp_threadinfo newti(this);
 
 	scap_threadinfo *table = scap_get_proc_table(m_h);
 
@@ -324,20 +444,9 @@ void sinsp::import_thread_table()
 	//
 	HASH_ITER(hh, table, pi, tpi)
 	{
-		sinsp_threadinfo newti(this);
 		newti.init(pi);
 		m_thread_manager->add_thread(newti, true);
 	}
-
-	//
-	// Scan the list to create the proper parent/child dependencies
-	//
-	m_thread_manager->create_child_dependencies();
-
-	//
-	// Scan the list to fix the direction of the sockets
-	//
-	m_thread_manager->fix_sockets_coming_from_proc();
 }
 
 void sinsp::import_ifaddr_list()
@@ -356,14 +465,17 @@ void sinsp::import_user_list()
 	uint32_t j;
 	scap_userlist* ul = scap_get_user_list(m_h);
 
-	for(j = 0; j < ul->nusers; j++)
+	if(ul)
 	{
-		m_userlist[ul->users[j].uid] = &(ul->users[j]);
-	}
+		for(j = 0; j < ul->nusers; j++)
+		{
+			m_userlist[ul->users[j].uid] = &(ul->users[j]);
+		}
 
-	for(j = 0; j < ul->ngroups; j++)
-	{
-		m_grouplist[ul->groups[j].gid] = &(ul->groups[j]);
+		for(j = 0; j < ul->ngroups; j++)
+		{
+			m_grouplist[ul->groups[j].gid] = &(ul->groups[j]);
+		}
 	}
 }
 
@@ -403,6 +515,12 @@ int32_t sinsp::next(OUT sinsp_evt **evt)
 	{
 		if(res == SCAP_TIMEOUT)
 		{
+#ifdef HAS_ANALYZER
+			if(m_analyzer)
+			{
+				m_analyzer->process_event(NULL, sinsp_analyzer::DF_TIMEOUT);
+			}
+#endif
 			*evt = NULL;
 			return res;
 		}
@@ -411,7 +529,7 @@ int32_t sinsp::next(OUT sinsp_evt **evt)
 #ifdef HAS_ANALYZER
 			if(m_analyzer)
 			{
-				m_analyzer->process_event(NULL, sinsp_analyzer::DF_NONE);
+				m_analyzer->process_event(NULL, sinsp_analyzer::DF_EOF);
 			}
 #endif
 		}
@@ -426,7 +544,7 @@ int32_t sinsp::next(OUT sinsp_evt **evt)
 	//
 	// Store a couple of values that we'll need later inside the event.
 	//
-	m_evt.m_evtnum = get_num_events();
+	m_evt.m_evtnum = scap_event_get_num(m_h);
 	m_lastevent_ts = m_evt.get_ts();
 #ifdef HAS_FILTERING
 	if(m_firstevent_ts == 0)
@@ -452,7 +570,10 @@ int32_t sinsp::next(OUT sinsp_evt **evt)
 	//
 	// Run the periodic connection and thread table cleanup
 	//
-	m_thread_manager->remove_inactive_threads();
+	if(m_islive)
+	{
+		m_thread_manager->remove_inactive_threads();
+	}
 #endif // HAS_ANALYZER
 
 	//
@@ -618,9 +739,57 @@ uint64_t sinsp::get_num_events()
 	return scap_event_get_num(m_h);
 }
 
+sinsp_threadinfo* sinsp::find_thread(int64_t tid, bool lookup_only)
+{
+	threadinfo_map_iterator_t it;
+
+	//
+	// Try looking up in our simple cache
+	//
+	if(m_thread_manager->m_last_tinfo && tid == m_thread_manager->m_last_tid)
+	{
+#ifdef GATHER_INTERNAL_STATS
+		m_thread_manager->m_cached_lookups->increment();
+#endif
+		m_thread_manager->m_last_tinfo->m_lastaccess_ts = m_lastevent_ts;
+		return m_thread_manager->m_last_tinfo;
+	}
+
+	//
+	// Caching failed, do a real lookup
+	//
+	it = m_thread_manager->m_threadtable.find(tid);
+	
+	if(it != m_thread_manager->m_threadtable.end())
+	{
+#ifdef GATHER_INTERNAL_STATS
+		m_thread_manager->m_non_cached_lookups->increment();
+#endif
+		if(!lookup_only)
+		{
+			m_thread_manager->m_last_tid = tid;
+			m_thread_manager->m_last_tinfo = &(it->second);
+			m_thread_manager->m_last_tinfo->m_lastaccess_ts = m_lastevent_ts;
+		}
+		return &(it->second);
+	}
+	else
+	{
+#ifdef GATHER_INTERNAL_STATS
+		m_thread_manager->m_failed_lookups->increment();
+#endif
+		return NULL;
+	}
+}
+
+sinsp_threadinfo* sinsp::find_thread_test(int64_t tid, bool lookup_only)
+{
+	return find_thread(tid, lookup_only);
+}
+
 sinsp_threadinfo* sinsp::get_thread(int64_t tid, bool query_os_if_not_found, bool lookup_only)
 {
-	sinsp_threadinfo* sinsp_proc = m_thread_manager->get_thread(tid, lookup_only);
+	sinsp_threadinfo* sinsp_proc = find_thread(tid, lookup_only);
 
 	if(sinsp_proc == NULL && query_os_if_not_found)
 	{
@@ -695,7 +864,7 @@ sinsp_threadinfo* sinsp::get_thread(int64_t tid, bool query_os_if_not_found, boo
 		// Done. Add the new thread to the list.
 		//
 		m_thread_manager->add_thread(newti, false);
-		sinsp_proc = m_thread_manager->get_thread(tid, lookup_only);
+		sinsp_proc = find_thread(tid, lookup_only);
 	}
 
 	return sinsp_proc;
@@ -761,9 +930,11 @@ void sinsp::stop_dropping_mode()
 {
 	if(m_islive)
 	{
+		g_logger.format(sinsp_logger::SEV_ERROR, "stopping drop mode");
+
 		if(scap_stop_dropping_mode(m_h) != SCAP_SUCCESS)
 		{
-				throw sinsp_exception(scap_getlasterr(m_h));
+			throw sinsp_exception(scap_getlasterr(m_h));
 		}
 	}
 }
@@ -772,6 +943,8 @@ void sinsp::start_dropping_mode(uint32_t sampling_ratio)
 {
 	if(m_islive)
 	{
+		g_logger.format(sinsp_logger::SEV_ERROR, "setting drop mode to %" PRIu32, sampling_ratio);
+
 		if(scap_start_dropping_mode(m_h, sampling_ratio) != SCAP_SUCCESS)
 		{
 			throw sinsp_exception(scap_getlasterr(m_h));
@@ -949,9 +1122,9 @@ void sinsp::set_fatfile_dump_mode(bool enable_fatfile)
 	m_isfatfile_enabled = enable_fatfile;
 }
 
-bool sinsp::is_debug_enabled()
+void sinsp::set_max_evt_output_len(uint32_t len)
 {
-	return m_isdebug_enabled;
+	m_max_evt_output_len = len;
 }
 
 sinsp_protodecoder* sinsp::require_protodecoder(string decoder_name)
@@ -998,4 +1171,82 @@ double sinsp::get_read_progress()
 	}
 
 	return (double)fpos * 100 / m_filesize;
+}
+
+bool sinsp::remove_inactive_threads()
+{
+	return m_thread_manager->remove_inactive_threads();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Note: this is defined here so we can inline it in sinso::next
+///////////////////////////////////////////////////////////////////////////////
+bool sinsp_thread_manager::remove_inactive_threads()
+{
+	bool res = false;
+
+	if(m_last_flush_time_ns == 0)
+	{
+		//
+		// Set the first table scan for 30 seconds in, so that we can spot bugs in the logic without having
+		// to wait for tens of minutes
+		//
+		if(m_inspector->m_inactive_thread_scan_time_ns > 30 * ONE_SECOND_IN_NS)
+		{
+			m_last_flush_time_ns = 
+				(m_inspector->m_lastevent_ts - m_inspector->m_inactive_thread_scan_time_ns + 30 * ONE_SECOND_IN_NS);
+		}
+		else
+		{
+			m_last_flush_time_ns = 
+				(m_inspector->m_lastevent_ts - m_inspector->m_inactive_thread_scan_time_ns);			
+		}
+	}
+
+	if(m_inspector->m_lastevent_ts > 
+		m_last_flush_time_ns + m_inspector->m_inactive_thread_scan_time_ns)
+	{
+		res = true;
+
+		m_last_flush_time_ns = m_inspector->m_lastevent_ts;
+
+		g_logger.format(sinsp_logger::SEV_INFO, "Flushing thread table");
+
+		//
+		// Go through the table and remove dead entries.
+		//
+		for(threadinfo_map_iterator_t it = m_threadtable.begin(); it != m_threadtable.end();)
+		{
+			bool closed = (it->second.m_flags & PPM_CL_CLOSED) != 0;
+
+			if(closed || 
+				((m_inspector->m_lastevent_ts > it->second.m_lastaccess_ts + m_inspector->m_thread_timeout_ns) &&
+					!scap_is_thread_alive(m_inspector->m_h, it->second.m_pid, it->first, it->second.m_comm.c_str()))
+					)
+			{
+				//
+				// Reset the cache
+				//
+				m_last_tid = 0;
+				m_last_tinfo = NULL;
+
+#ifdef GATHER_INTERNAL_STATS
+				m_removed_threads->increment();
+#endif
+				remove_thread(it++, closed);
+			}
+			else
+			{
+				++it;
+			}
+		}
+
+		//
+		// Rebalance the thread table dependency tree, so we free up threads that
+		// exited but that are stuck because of reference counting.
+		//
+		recreate_child_dependencies();
+	}
+
+	return res;
 }

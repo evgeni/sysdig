@@ -47,6 +47,12 @@ extern "C" {
  */
 
 //
+// Forward declarations
+//
+typedef struct scap scap_t;
+typedef struct ppm_evt_hdr scap_evt;
+
+//
 // Core types
 //
 #include "uthash.h"
@@ -188,7 +194,7 @@ typedef struct scap_threadinfo
 	uint64_t pid; ///< The id of the process containing this thread. In single thread processes, this is equal to tid.
 	uint64_t ptid; ///< The id of the thread that created this thread.
 	char comm[SCAP_MAX_PATH_SIZE]; ///< Command name (e.g. "top")
-	char exe[SCAP_MAX_PATH_SIZE]; ///< Full command name (e.g. "/bin/top")
+	char exe[SCAP_MAX_PATH_SIZE]; ///< argv[0] (e.g. "sshd: user@pts/4")
 	char args[SCAP_MAX_ARGS_SIZE]; ///< Command line arguments (e.g. "-d1")
 	uint16_t args_len; ///< Command line arguments length
 	char env[SCAP_MAX_ENV_SIZE]; ///< Environment
@@ -206,6 +212,24 @@ typedef struct scap_threadinfo
 	scap_fdinfo* fdlist; ///< The fd table for this process
 	UT_hash_handle hh; ///< makes this structure hashable
 }scap_threadinfo;
+
+typedef void (*proc_entry_callback)(void* context,
+									int64_t tid,
+									scap_threadinfo* tinfo, 
+									scap_fdinfo* fdinfo,
+									scap_t* newhandle);  
+
+/*!
+  \brief Arguments for scap_open
+*/
+typedef struct scap_open_args
+{
+	const char* fname; ///< The name of the file to open. NULL for live captures.
+	proc_entry_callback proc_callback; ///< Callback to be invoked for each thread/fd that is extracted from /proc, or NULL if no callback is needed.
+	void* proc_callback_context; ///< Opaque pointer that will be included in the calls to proc_callback. Ignored if proc_callback is NULL.
+	bool import_users; ///< true if the user list should be created when opening the capture.
+}scap_open_args;
+
 
 //
 // The follwing stuff is byte aligned because we save it to disk.
@@ -412,12 +436,6 @@ typedef struct scap_dumper scap_dumper_t;
 #define IN
 #define OUT
 
-//
-// Forward declarations
-//
-typedef struct scap scap_t;
-typedef struct ppm_evt_hdr scap_evt;
-
 ///////////////////////////////////////////////////////////////////////////////
 // API functions
 ///////////////////////////////////////////////////////////////////////////////
@@ -446,6 +464,17 @@ scap_t* scap_open_live(char *error);
   \return The capture instance handle in case of success. NULL in case of failure.
 */
 scap_t* scap_open_offline(const char* fname, char *error);
+
+/*!
+  \brief Advanced function to start a capture.
+
+  \param args a \ref scap_open_args structure containing the open paraneters.
+  \param error Pointer to a buffer that will contain the error string in case the
+    function fails. The buffer must have size SCAP_LASTERR_SIZE.
+			
+  \return The capture instance handle in case of success. NULL in case of failure.
+*/
+scap_t* scap_open(scap_open_args args, char *error);
 
 /*!
   \brief Close a capture handle.
@@ -686,20 +715,6 @@ scap_addrlist* scap_get_ifaddr_list(scap_t* handle);
 scap_userlist* scap_get_user_list(scap_t* handle);
 
 /*!
-  \brief This function can be used to specify the time after which \ref scap_next
-  returns when no events are available. 
-
-  \param handle Handle to the capture instance.
-  \param handle The number of milliseconds after which scap_next will return 
-  SCAP_TIMEOUT. Use 0 if you want to the scap_next to always return immediately.
-
-  \return SCAP_SUCCESS if the call is succesful.
-   On Failure, SCAP_FAILURE is returned and scap_getlasterr() can be used to obtain 
-   the cause of the error. 
-*/
-int32_t scap_set_empty_buffer_timeout_ms(scap_t* handle, uint32_t timeout_ms);
-
-/*!
   \brief Retrieve the table with the description of every event type that 
   the capture driver supports. 
 
@@ -806,6 +821,10 @@ uint32_t scap_event_get_sentinel_begin(scap_evt* e);
 // Get the information about a process.
 // The returned pointer must be freed via scap_proc_free by the caller.
 struct scap_threadinfo* scap_proc_get(scap_t* handle, int64_t tid, bool scan_sockets);
+
+// Check if the given thread exists in ;proc
+bool scap_is_thread_alive(scap_t* handle, int64_t pid, int64_t tid, const char* comm);
+
 
 void scap_proc_free(scap_t* handle, struct scap_threadinfo* procinfo);
 int32_t scap_stop_dropping_mode(scap_t* handle);

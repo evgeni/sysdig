@@ -201,7 +201,7 @@ line after the name.
 .P
 .PD
 lists the available chisels.
-Looks for chisels in ., ./chisels, ~/.chisels and
+Looks for chisels in ./chisels, ~/.chisels and
 /usr/share/sysdig/chisels.
 .PP
 \f[B]\-d\f[], \f[B]\-\-displayflt\f[]
@@ -220,6 +220,19 @@ FD names) to be lost.
 .P
 .PD
 Capture events about sysdig itself
+.PP
+\f[B]\-E\f[], \f[B]\-\-exclude\-users\f[]
+.PD 0
+.P
+.PD
+Don\[aq]t create the user/group tables by querying the OS when sysdig
+starts.
+This also means that no user or group info will be written to the
+tracefile by the \-w flag.
+The user/group tables are necessary to use filter fields like user.name
+or group.name.
+However, creating them can increase sysdig\[aq]s startup time.
+Moreover, they contain information that could be privacy sensitive.
 .PP
 \f[B]\-F\f[], \f[B]\-\-fatfile\f[]
 .PD 0
@@ -335,6 +348,11 @@ exit, and \f[B]D\f[] for delta from the previous event.
 .P
 .PD
 Verbose output.
+This flag will cause the full content of text and binary buffers to be
+printed on screen, instead of being truncated to 40 characters.
+Note that data buffers length is still limited by the snaplen (refer to
+the \-s flag documentation) \-v will also make sysdig print some summary
+information at the end of the capture.
 .PP
 \f[B]\-\-version\f[]
 .PD 0

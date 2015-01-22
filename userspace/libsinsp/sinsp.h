@@ -258,6 +258,24 @@ public:
 	void set_snaplen(uint32_t snaplen);
 
 	/*!
+	  \brief Determine if this inspector is going to load user tables on
+	  startup.
+
+	  \param import_users if true, no user tables will be created for 
+	  this capture. This also means that no user or group info will be 
+	  written to the tracefile by the -w flag. The user/group tables are 
+	  necessary to use filter fields like user.name or group.name. However, 
+	  creating them can increase sysdig's startup time. Moreover, they contain
+	  information that could be privacy sensitive.
+
+	  \note default behavior is import_users=true.
+
+	  @throws a sinsp_exception containing the error string is thrown in case
+	   of failure.
+	*/
+	void set_import_users(bool import_users);
+
+	/*!
 	  \brief temporarily pauses event capture.
 
 	  \note This function can only be called for live captures.
@@ -504,9 +522,20 @@ public:
 	void set_fatfile_dump_mode(bool enable_fatfile);
 
 	/*!
+	  \brief sets the max length of event argument strings. 
+	  \param len Max length after which an avent argument string is truncated.
+	   0 means no limit. Use this to reduce verbosity when printing event info
+	   on screen.
+	*/
+	void set_max_evt_output_len(uint32_t len);
+
+	/*!
 	  \brief Returns true if the debug mode is enabled.
 	*/
-	bool is_debug_enabled();
+	inline bool is_debug_enabled()
+	{
+		return m_isdebug_enabled;		
+	}
 
 	/*!
 	  \brief Lets a filter plugin request a protocol decoder.
@@ -541,7 +570,9 @@ public:
 	//
 	void stop_dropping_mode();
 	void start_dropping_mode(uint32_t sampling_ratio);
-	void import_ipv4_interface(const sinsp_ipv4_ifinfo& ifinfo);
+	void on_new_entry_from_proc(void* context, int64_t tid, scap_threadinfo* tinfo, 
+		scap_fdinfo* fdinfo, scap_t* newhandle);
+
 	//
 	// Allocates private state in the thread info class.
 	// Returns the ID to use when retrieving the memory area.
@@ -552,6 +583,7 @@ public:
 	sinsp_parser* get_parser();
 
 	bool setup_cycle_writer(string base_file_name, int rollover_mb, int duration_seconds, int file_limit, bool do_cycle, bool compress);
+	void import_ipv4_interface(const sinsp_ipv4_ifinfo& ifinfo);
 
 VISIBILITY_PRIVATE
 
@@ -568,6 +600,16 @@ private:
 
 	void add_thread(const sinsp_threadinfo& ptinfo);
 	void remove_thread(int64_t tid, bool force);
+	//
+	// Note: lookup_only should be used when the query for the thread is made
+	//       not as a consequence of an event for that thread arriving, but for
+	//       just for lookup reason. In that case, m_lastaccess_ts is not updated
+	//       and m_last_tinfo is not set.
+	//
+	inline sinsp_threadinfo* find_thread(int64_t tid, bool lookup_only);
+	// this is here for testing purposes only
+	sinsp_threadinfo* find_thread_test(int64_t tid, bool lookup_only);
+	bool remove_inactive_threads();
 
 	scap_t* m_h;
 	int64_t m_filesize;
@@ -575,6 +617,7 @@ private:
 	string m_input_filename;
 	bool m_isdebug_enabled;
 	bool m_isfatfile_enabled;
+	uint32_t m_max_evt_output_len;
 	bool m_compress;
 	sinsp_evt m_evt;
 	string m_lasterr;
@@ -609,6 +652,9 @@ private:
 	uint32_t m_n_proc_lookups;
 	uint32_t m_max_n_proc_lookups;
 	uint32_t m_max_n_proc_socket_lookups;
+#ifdef HAS_ANALYZER
+	vector<uint64_t> m_tid_collisions;
+#endif
 
 	//
 	// Saved snaplen
@@ -630,6 +676,7 @@ private:
 	//
 	// User and group tables
 	//
+	bool m_import_users;
 	unordered_map<uint32_t, scap_userinfo*> m_userlist;
 	unordered_map<uint32_t, scap_groupinfo*> m_grouplist;
 
@@ -639,10 +686,12 @@ private:
 	cycle_writer* m_cycle_writer;
 	bool m_write_cycling;
 
+#ifdef SIMULATE_DROP_MODE
 	//
 	// Some dropping infrastructure
 	//
 	bool m_isdropping;
+#endif
 
 	//
 	// Protocol decoding state

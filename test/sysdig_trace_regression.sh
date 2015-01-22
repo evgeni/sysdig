@@ -6,10 +6,11 @@ BASEDIR=$(dirname $SCRIPT)
 
 SYSDIG=$1
 CHISELS=$2
-TMPBASE=${3:-$(mktemp -d --tmpdir sysdig.XXXXXXXXXX)}
+TMPBASE=${4:-$(mktemp -d --tmpdir sysdig.XXXXXXXXXX)}
 TRACEDIR="${TMPBASE}/traces"
 RESULTDIR="${TMPBASE}/results"
 BASELINEDIR="${TMPBASE}/baseline"
+BRANCH=$3
 
 if [ ! -d "$TRACEDIR" ]; then
 	mkdir -p $TRACEDIR
@@ -23,7 +24,7 @@ fi
 if [ ! -d "$BASELINEDIR" ]; then
 	mkdir -p $BASELINEDIR
 	cd $BASELINEDIR
-	wget https://s3.amazonaws.com/download.draios.com/sysdig-tests/baseline.zip
+	wget -O baseline.zip https://s3.amazonaws.com/download.draios.com/sysdig-tests/baseline-$BRANCH.zip || wget -O baseline.zip https://s3.amazonaws.com/download.draios.com/sysdig-tests/baseline-dev.zip
 	unzip baseline.zip
 	rm -rf baseline.zip
 	cd -
