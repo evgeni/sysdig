@@ -1,8 +1,6 @@
-# This completion code is based on the cmdline interface as it exists in sysdig
-# 0.1.90
-
-complete -W                                     \
-'                                               \
+_sysdig_complete()
+{
+  local opts='                                  \
   -A                                            \
   --print-ascii                                 \
   -b                                            \
@@ -55,16 +53,54 @@ complete -W                                     \
   -c                                            \
   --chisel                                      \
   -i                                            \
-  --chisel-info' sysdig
+  --chisel-info'
 
-  # Sysdig 0.1.85 had these options too, but they were problematic, so I'm
-  # removing them until they can be fixed
-  # -C
-  # --file-size
-  # -G
-  # --seconds
-  # -W
-  # --limit
+  local cur=${COMP_WORDS[COMP_CWORD]}
+  local prev=${COMP_WORDS[COMP_CWORD-1]}
+
+  case "$prev" in
+   -c|--chisel|-i|--chisel-info)
+    local chisels=""
+    local detail="Use the -i flag to get detailed information about a specific chisel"
+      while IFS= read -r line
+      do
+        if [[ $line =~ "---" ]]; then
+            # skip lines such as
+            # -----------------
+            continue;
+        elif [[ -z "$line" ]]; then
+            # empty lines reset the category
+            continue;
+        elif [[ $line =~ "Category" ]]; then
+            # category
+            continue;
+        elif [[ $line =~ $detail ]]; then
+            # detail instructions
+            continue;
+        fi
+
+        local chisel=${line%% *}
+
+        if [[ -z "$chisel" ]]; then
+            # empty lines from description
+            continue; 
+        fi
+
+        chisels="$chisels $chisel"
+
+      done < <(sysdig -cl)
+      COMPREPLY=( $( compgen -W "$chisels" -- $cur ) )
+     return 0
+     ;;
+
+  esac
+
+  # completing an option
+  if [[ "$cur" == -* ]]; then
+          COMPREPLY=( $( compgen -W "$opts" -- $cur ) )
+  fi
+}
+complete -o default -F _sysdig_complete sysdig
 
 # Local Variables:
 # mode:sh
