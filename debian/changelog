@@ -1,3 +1,12 @@
+sysdig (0.1.97-1) experimental; urgency=medium
+
+  * New upstream release.
+    + Builds properly against kernel 3.19
+      Closes: #774693
+      LP: #1419402
+
+ -- Evgeni Golov <evgeni@debian.org>  Sat, 28 Feb 2015 11:49:42 +0100
+
 sysdig (0.1.92-1) experimental; urgency=medium
 
   * New upstream release.
