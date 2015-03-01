@@ -1,0 +1,76 @@
+commit 0559bff6908ba079a69dd85d3122a308d32767e8
+Author: Evgeni Golov <evgeni@debian.org>
+Date:   Thu Jan 22 21:28:43 2015 +0100
+
+    f_dentry was droped in kernel 3.19, replace it with the real path
+    
+    struct file from linux/fs.h had a d_entry member up to kernel 2.6.18,
+    in 2.6.19 it was changed to f_path.dentry, with the compatibility macro.
+    
+    78d28e651f97866d608d9b41f8ad291e65d47dd5 droped the f_dentry macro.
+    One has to use f_path.dentry directly.
+    
+    Debian-Bug: https://bugs.debian.org/774693
+
+diff --git a/driver/main.c b/driver/main.c
+index 3597277..dc452c4 100644
+--- a/driver/main.c
++++ b/driver/main.c
+@@ -196,7 +196,7 @@ static int ppm_open(struct inode *inode, struct file *filp)
+ {
+ 	int ret;
+ 	struct ppm_ring_buffer_context *ring;
+-	int ring_no = iminor(filp->f_dentry->d_inode);
++	int ring_no = iminor(filp->f_path.dentry->d_inode);
+ 
+ 	mutex_lock(&g_open_mutex);
+ 
+@@ -291,7 +291,7 @@ static int ppm_release(struct inode *inode, struct file *filp)
+ {
+ 	int ret;
+ 	struct ppm_ring_buffer_context *ring;
+-	int ring_no = iminor(filp->f_dentry->d_inode);
++	int ring_no = iminor(filp->f_path.dentry->d_inode);
+ 
+ 	mutex_lock(&g_open_mutex);
+ 
+@@ -349,7 +349,7 @@ static long ppm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ 	switch (cmd) {
+ 	case PPM_IOCTL_DISABLE_CAPTURE:
+ 	{
+-		int ring_no = iminor(filp->f_dentry->d_inode);
++		int ring_no = iminor(filp->f_path.dentry->d_inode);
+ 		struct ppm_ring_buffer_context *ring = per_cpu(g_ring_buffers, ring_no);
+ 
+ 		mutex_lock(&g_open_mutex);
+@@ -362,7 +362,7 @@ static long ppm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ 	}
+ 	case PPM_IOCTL_ENABLE_CAPTURE:
+ 	{
+-		int ring_no = iminor(filp->f_dentry->d_inode);
++		int ring_no = iminor(filp->f_path.dentry->d_inode);
+ 		struct ppm_ring_buffer_context *ring = per_cpu(g_ring_buffers, ring_no);
+ 
+ 		mutex_lock(&g_open_mutex);
+@@ -495,7 +495,7 @@ static int ppm_mmap(struct file *filp, struct vm_area_struct *vma)
+ 		unsigned long pfn;
+ 		char *vmalloc_area_ptr;
+ 		char *orig_vmalloc_area_ptr;
+-		int ring_no = iminor(filp->f_dentry->d_inode);
++		int ring_no = iminor(filp->f_path.dentry->d_inode);
+ 		struct ppm_ring_buffer_context *ring;
+ 
+ 		vpr_info("mmap for CPU %d, start=%lu len=%ld page_size=%lu\n",
+diff --git a/driver/ppm_fillers.c b/driver/ppm_fillers.c
+index 91a6c26..5417772 100644
+--- a/driver/ppm_fillers.c
++++ b/driver/ppm_fillers.c
+@@ -1910,7 +1910,7 @@ static int f_sys_pipe_x(struct event_filler_arguments *args)
+ 	file = fget(fds[0]);
+ 	val = 0;
+ 	if (likely(file != NULL)) {
+-		val = file->f_dentry->d_inode->i_ino;
++		val = file->f_path.dentry->d_inode->i_ino;
+ 		fput(file);
+ 	}
+ 

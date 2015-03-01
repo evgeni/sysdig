@@ -1,3 +1,10 @@
+sysdig (0.1.89-1ubuntu1) vivid; urgency=medium
+
+  * Backport two patches from upstream for compiling against kernel 3.19
+    LP: #1419402
+
+ -- Evgeni Golov <evgeni@debian.org>  Sun, 01 Mar 2015 13:53:02 +0100
+
 sysdig (0.1.89-1) unstable; urgency=low
 
   [ Evgeni Golov ]
