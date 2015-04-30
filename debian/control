@@ -2,7 +2,7 @@ Source: sysdig
 Section: admin
 Priority: optional
 Maintainer: Evgeni Golov <evgeni@debian.org>
-Uploaders: Harlan Lieberman-Berg <H.LiebermanBerg@gmail.com>
+Uploaders: Harlan Lieberman-Berg <hlieberman@setec.io>
 Build-Depends: debhelper (>= 9), cmake, pandoc (>= 1.11),
  libluajit-5.1-dev [i386 amd64 kfreebsd-i386 armel armhf powerpc powerpcspe mips mipsel] | liblua5.1-0-dev,
  libjsoncpp-dev, zlib1g-dev
@@ -17,24 +17,26 @@ Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Recommends: sysdig-dkms
 Description: system-level exploration and troubleshooting tool
- Sysdig instruments your physical and virtual machines at the OS level by
- installing into the Linux kernel and capturing system calls and other OS
- events. Then, using sysdig's command line interface, you can filter and
- decode these events in order to extract useful information.
+ Sysdig instruments your physical and virtual machines at the OS level
+ by installing into the Linux kernel and capturing system calls and
+ other OS events. Then, using sysdig's command line interface, you can
+ filter and decode these events in order to extract useful information
+ and statistics.
  .
- Sysdig can be used to inspect systems live in real-time, or to generate
+ Sysdig can be used to inspect live systems in real-time, or to generate
  trace files that can be analyzed at a later stage.
 
 Package: sysdig-dkms
 Architecture: all
 Depends: ${misc:Depends}
 Description: system-level exploration and troubleshooting tool - kernel source
- Sysdig instruments your physical and virtual machines at the OS level by
- installing into the Linux kernel and capturing system calls and other OS
- events. Then, using sysdig's command line interface, you can filter and
- decode these events in order to extract useful information.
+ Sysdig instruments your physical and virtual machines at the OS level
+ by installing into the Linux kernel and capturing system calls and
+ other OS events. Then, using sysdig's command line interface, you can
+ filter and decode these events in order to extract useful information
+ and statistics.
  .
- Sysdig can be used to inspect systems live in real-time, or to generate
+ Sysdig can be used to inspect live systems in real-time, or to generate
  trace files that can be analyzed at a later stage.
  .
  This package contains the source for the kernel module of sysdig.
