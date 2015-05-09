@@ -1,3 +1,16 @@
+sysdig (0.1.99-1) unstable; urgency=medium
+
+  [ Harlan Lieberman-Berg ]
+  * New upstream release.
+  * Add patch to fix minor misspellings in manpage.
+  * Tweak description to include keyword "statistics", more natural flow.
+    Closes: #780338
+
+  [ Evgeni Golov ]
+  * Upload to unstable.
+
+ -- Evgeni Golov <evgeni@debian.org>  Sat, 09 May 2015 21:15:47 +0200
+
 sysdig (0.1.97-1) experimental; urgency=medium
 
   * New upstream release.
