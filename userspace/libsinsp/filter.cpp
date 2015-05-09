@@ -56,6 +56,7 @@ sinsp_filter_check_list::sinsp_filter_check_list()
 	add_filter_check(new sinsp_filter_check_user());
 	add_filter_check(new sinsp_filter_check_group());
 	add_filter_check(new sinsp_filter_check_syslog());
+	add_filter_check(new sinsp_filter_check_container());
 }
 
 sinsp_filter_check_list::~sinsp_filter_check_list()
@@ -121,6 +122,20 @@ field_not_found:
 	return NULL;
 }
 
+sinsp_filter_check* sinsp_filter_check_list::new_filter_check_from_another(sinsp_filter_check *chk)
+{
+	sinsp_filter_check *newchk = chk->allocate_new();
+
+	newchk->m_inspector = chk->m_inspector;
+	newchk->m_field_id = chk->m_field_id;
+	newchk->m_field = &chk->m_info.m_fields[chk->m_field_id];
+
+	newchk->m_boolop = chk->m_boolop;
+	newchk->m_cmpop = chk->m_cmpop;
+
+	return newchk;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // type-based comparison functions
 ///////////////////////////////////////////////////////////////////////////////
@@ -162,8 +177,14 @@ bool flt_compare_int64(ppm_cmp_operator op, int64_t operand1, int64_t operand2)
 		return (operand1 > operand2);
 	case CO_GE:
 		return (operand1 >= operand2);
-	default:
+	case CO_CONTAINS:
 		throw sinsp_exception("'contains' not supported for numeric filters");
+		return false;
+	case CO_IN:
+		throw sinsp_exception("'in' not supported for numeric filters");
+		return false;
+	default:
+		throw sinsp_exception("'unknown' not supported for numeric filters");
 		return false;
 	}
 }
@@ -177,6 +198,8 @@ bool flt_compare_string(ppm_cmp_operator op, char* operand1, char* operand2)
 	case CO_NE:
 		return (strcmp(operand1, operand2) != 0);
 	case CO_CONTAINS:
+		return (strstr(operand1, operand2) != NULL);
+	case CO_IN:
 		return (strstr(operand1, operand2) != NULL);
 	case CO_LT:
 		throw sinsp_exception("'<' not supported for string filters");
@@ -343,7 +366,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
 			{
 		 		return (Json::Value::Int64)*(int64_t *)rawval;
 			}
-			else 
+			else
 			{
 				return rawval_to_string(rawval, finfo, len);
 			}
@@ -644,12 +667,12 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval, const filtercheck_fi
 			}
 		case PT_IPV4ADDR:
 			snprintf(m_getpropertystr_storage,
-				        sizeof(m_getpropertystr_storage),
-				        "%" PRIu8 ".%" PRIu8 ".%" PRIu8 ".%" PRIu8,
-				        rawval[0],
-				        rawval[1],
-				        rawval[2],
-				        rawval[3]);
+						sizeof(m_getpropertystr_storage),
+						"%" PRIu8 ".%" PRIu8 ".%" PRIu8 ".%" PRIu8,
+						rawval[0],
+						rawval[1],
+						rawval[2],
+						rawval[3]);
 			return m_getpropertystr_storage;
 		default:
 			ASSERT(false);
@@ -764,7 +787,7 @@ Json::Value sinsp_filter_check::tojson(sinsp_evt* evt)
 	uint32_t len;
 	Json::Value jsonval = extract_as_js(evt, &len);
 
-	if(jsonval == Json::Value::null) 
+	if(jsonval == Json::Value::null)
 	{
 		uint8_t* rawval = extract(evt, &len);
 		if(rawval == NULL)
@@ -772,8 +795,8 @@ Json::Value sinsp_filter_check::tojson(sinsp_evt* evt)
 			return Json::Value::null;
 		}
 		return rawval_to_json(rawval, m_field, len);
-	} 
-	
+	}
+
 	return jsonval;
 }
 
@@ -827,6 +850,10 @@ bool sinsp_filter_check::compare(sinsp_evt *evt)
 	{
 		return false;
 	}
+	else if(m_cmpop == CO_EXISTS)
+	{
+		return true;
+	}
 
 	return flt_compare(m_cmpop,
 		m_info.m_fields[m_field_id].m_type,
@@ -874,23 +901,21 @@ bool sinsp_filter_expression::compare(sinsp_evt *evt)
 	uint32_t j;
 	uint32_t size = (uint32_t)m_checks.size();
 	bool res = true;
-	bool chkres;
 
 	for(j = 0; j < size; j++)
 	{
 		sinsp_filter_check* chk = m_checks[j];
 		ASSERT(chk != NULL);
 
-		chkres = chk->compare(evt);
 		if(j == 0)
 		{
 			switch(chk->m_boolop)
 			{
 			case BO_NONE:
-				res = chkres;
+				res = chk->compare(evt);
 				break;
 			case BO_NOT:
-				res = !chkres;
+				res = !chk->compare(evt);
 				break;
 			default:
 				ASSERT(false);
@@ -902,16 +927,16 @@ bool sinsp_filter_expression::compare(sinsp_evt *evt)
 			switch(chk->m_boolop)
 			{
 			case BO_OR:
-				res = res || chkres;
+				res = res || chk->compare(evt);
 				break;
 			case BO_AND:
-				res = res && chkres;
+				res = res && chk->compare(evt);
 				break;
 			case BO_ORNOT:
-				res = res || !chkres;
+				res = res || !chk->compare(evt);
 				break;
 			case BO_ANDNOT:
-				res = res && !chkres;
+				res = res && !chk->compare(evt);
 				break;
 			default:
 				ASSERT(false);
@@ -1012,7 +1037,7 @@ char sinsp_filter::next()
 	}
 }
 
-vector<char> sinsp_filter::next_operand(bool expecting_first_operand)
+vector<char> sinsp_filter::next_operand(bool expecting_first_operand, bool in_clause)
 {
 	vector<char> res;
 	bool is_quoted = false;
@@ -1038,7 +1063,7 @@ vector<char> sinsp_filter::next_operand(bool expecting_first_operand)
 	//
 	// If there are quotes, don't stop on blank
 	//
-	if(m_scanpos < m_scansize && 
+	if(m_scanpos < m_scansize &&
 		(m_fltstr[m_scanpos] == '"' || m_fltstr[m_scanpos] == '\''))
 	{
 		is_quoted = true;
@@ -1063,7 +1088,7 @@ vector<char> sinsp_filter::next_operand(bool expecting_first_operand)
 		}
 		else
 		{
-			is_end_of_word = (!is_quoted && (isblank(curchar) || is_bracket(curchar))) ||
+			is_end_of_word = (!is_quoted && (isblank(curchar) || is_bracket(curchar) || (in_clause && curchar == ','))) ||
 				(is_quoted && escape_state != PES_SLASH && (curchar == '"' || curchar == '\''));
 		}
 
@@ -1080,7 +1105,7 @@ vector<char> sinsp_filter::next_operand(bool expecting_first_operand)
 			//
 			ASSERT(m_scanpos > start);
 
-			if(curchar == '(' || curchar == ')')
+			if(curchar == '(' || curchar == ')' || (in_clause && curchar == ','))
 			{
 				m_scanpos--;
 			}
@@ -1166,7 +1191,11 @@ vector<char> sinsp_filter::next_operand(bool expecting_first_operand)
 
 bool sinsp_filter::compare_no_consume(const string& str)
 {
-	if(m_scanpos + (int32_t)str.size() >= m_scansize)
+	//
+	// If the rest of the filter cannot contain the operand we may return
+	// The filter may finish with the operand itself though (e.g. "proc.name exists")
+	//
+	if(m_scanpos + (int32_t)str.size() > m_scansize)
 	{
 		return false;
 	}
@@ -1235,6 +1264,16 @@ ppm_cmp_operator sinsp_filter::next_comparison_operator()
 		m_scanpos += 8;
 		return CO_CONTAINS;
 	}
+	else if(compare_no_consume("in"))
+	{
+		m_scanpos += 2;
+		return CO_IN;
+	}
+	else if(compare_no_consume("exists"))
+	{
+		m_scanpos += 6;
+		return CO_EXISTS;
+	}
 	else
 	{
 		throw sinsp_exception("filter error: unrecognized comparison operator after " + m_fltstr.substr(0, start));
@@ -1244,7 +1283,7 @@ ppm_cmp_operator sinsp_filter::next_comparison_operator()
 void sinsp_filter::parse_check(sinsp_filter_expression* parent_expr, boolop op)
 {
 	uint32_t startpos = m_scanpos;
-	vector<char> operand1 = next_operand(true);
+	vector<char> operand1 = next_operand(true, false);
 	string str_operand1 = string((char *)&operand1[0]);
 	sinsp_filter_check* chk = g_filterlist.new_filter_check_from_fldname(str_operand1, m_inspector, true);
 
@@ -1263,14 +1302,118 @@ void sinsp_filter::parse_check(sinsp_filter_expression* parent_expr, boolop op)
 	}
 
 	ppm_cmp_operator co = next_comparison_operator();
-	vector<char> operand2 = next_operand(false);
 
 	chk->m_boolop = op;
 	chk->m_cmpop = co;
 	chk->parse_field_name((char *)&operand1[0]);
-	chk->parse_filter_value((char *)&operand2[0], (uint32_t)operand2.size() - 1);
 
-	parent_expr->add_check(chk);
+	//
+	// In this case we need to create '(field=value1 or field=value2 ...)'
+	//
+	if(co == CO_IN)
+	{
+		//
+		// Separate the 'or's from the
+		// rest of the conditions
+		//
+		push_expression(op);
+
+		//
+		// Skip spaces
+		//
+		if(isblank(m_fltstr[m_scanpos]))
+		{
+			next();
+		}
+
+		if(m_fltstr[m_scanpos] != '(')
+		{
+			throw sinsp_exception("expected '(' after 'in' operand");
+		}
+
+		//
+		// Skip '('
+		//
+		m_scanpos++;
+
+		//
+		// The first boolean operand will be BO_NONE
+		// Then we will start putting BO_ORs
+		//
+		op = BO_NONE;
+
+		//
+		// Create the 'or' sequence
+		//
+		while(true)
+		{
+			// 'in' clause aware
+			vector<char> operand2 = next_operand(false, true);
+
+			//
+			// Append every sinsp_filter_check creating the 'or' sequence
+			//
+			sinsp_filter_check* newchk = g_filterlist.new_filter_check_from_another(chk);
+			newchk->m_boolop = op;
+			newchk->m_cmpop = CO_EQ;
+			newchk->parse_filter_value((char *)&operand2[0], (uint32_t)operand2.size() - 1);
+
+			//
+			// We pushed another expression before
+			// so 'parent_expr' still referers to
+			// the old one, this is the new nested
+			// level for the 'or' sequence
+			//
+			m_curexpr->add_check(newchk);
+
+			next();
+
+			if(m_fltstr[m_scanpos] == ')')
+			{
+				break;
+			}
+			else if(m_fltstr[m_scanpos] == ',')
+			{
+				m_scanpos++;
+			}
+			else
+			{
+				throw sinsp_exception("expected either ')' or ',' after a value inside the 'in' clause");
+			}
+
+			//
+			// From now on we 'or' every newchk
+			//
+			op = BO_OR;
+		}
+
+		//
+		// Come back to the rest of the filter
+		//
+		pop_expression();
+	}
+	else
+	{
+		//
+		// In this case we want next() to return the very next character
+		// At this moment m_scanpos is already at it
+		// e.g. "(field exists) and ..."
+		//
+		if(co == CO_EXISTS)
+		{
+			m_scanpos--;
+		}
+		//
+		// Otherwise we need a value for the operand
+		//
+		else
+		{
+			vector<char> operand2 = next_operand(false, false);
+			chk->parse_filter_value((char *)&operand2[0], (uint32_t)operand2.size() - 1);
+		}
+
+		parent_expr->add_check(chk);
+	}
 }
 
 void sinsp_filter::push_expression(boolop op)
@@ -1391,7 +1534,7 @@ void sinsp_filter::compile(const string& fltstr)
 
 			break;
 		default:
-			if (m_state == ST_NEED_EXPRESSION)
+			if(m_state == ST_NEED_EXPRESSION)
 			{
 				parse_check(m_curexpr, m_last_boolop);
 

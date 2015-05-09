@@ -34,6 +34,10 @@ where:
 
 The output format can be customized with the -p switch, using any of the fields listed by 'sysdig -l'.
 
+Using -pc or -pcontainer, the default format will be changed to a container-friendly one:
+
+```%evt.num %evt.time %evt.cpu %container.name (%container.id) %proc.name (%thread.tid:%thread.vtid) %evt.dir %evt.type %evt.info```
+
 **Trace Files**  
 
 A trace file can be created using the -w switch:
@@ -52,8 +56,10 @@ sysdig filters are specified at the end of the command line. The simplest filter
 > $ sysdig proc.name=cat
 
 The list of available fields can be obtained with 'sysdig -l'.
-Filter expressions can use one of these comparison operators: _=_, _!=_, _<_, _<=_, _>_, _>=_ and _contains_. e.g.
+Filter expressions can use one of these comparison operators: _=_, _!=_, _<_, _<=_, _>_, _>=_, _contains_, _in_ and _exists_. e.g.
 > $ sysdig fd.name contains /etc
+> $ sysdig "evt.type in ( 'select', 'poll' )"
+> $ sysdig proc.name exists
 
 Multiple checks can be combined through brakets and the following boolean operators: _and_, _or_, _not_. e.g.
 > $ sysdig "not (fd.name contains /proc or fd.name contains /dev)"
@@ -128,7 +134,7 @@ OPTIONS
   Print progress on stderr while processing trace files.
   
 **-p** _outputformat_, **--print**=_outputformat_  
-  Specify the format to be used when printing the events. See the examples section below for more info.
+  Specify the format to be used when printing the events. With -pc or -pcontainer will use a container-friendly format. See the examples section below for more info.
   
 **-q**, **--quiet**  
   Don't print events on the screen. Useful when dumping to disk.
@@ -174,6 +180,9 @@ Capture all the events from the live system and save them to disk
 
 Read events from a file and print them to screen
 > $ sysdig -r dumpfile.scap
+
+Prepare a sanitized version of a system capture
+> $ sysdig -r dumpfile.scap 'not evt.buffer contains foo' -w cleandump.scap
 
 Print all the open system calls invoked by cat
 > $ sysdig proc.name=cat and evt.type=open

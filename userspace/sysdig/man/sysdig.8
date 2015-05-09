@@ -71,6 +71,11 @@ evt.args is the list of event arguments.
 The output format can be customized with the \-p switch, using any of
 the fields listed by \[aq]sysdig \-l\[aq].
 .PP
+Using \-pc or \-pcontainer, the default format will be changed to a
+container\-friendly one:
+.PP
+\f[C]%evt.num\ %evt.time\ %evt.cpu\ %container.name\ (%container.id)\ %proc.name\ (%thread.tid:%thread.vtid)\ %evt.dir\ %evt.type\ %evt.info\f[]
+.PP
 \f[B]Trace Files\f[]
 .PP
 A trace file can be created using the \-w switch:
@@ -112,11 +117,19 @@ The list of available fields can be obtained with \[aq]sysdig \-l\[aq].
 .PD
 Filter expressions can use one of these comparison operators:
 \f[I]=\f[], \f[I]!=\f[], \f[I]<\f[], \f[I]<=\f[], \f[I]>\f[],
-\f[I]>=\f[] and \f[I]contains\f[].
+\f[I]>=\f[], \f[I]contains\f[], \f[I]in\f[] and \f[I]exists\f[].
 e.g.
 .RS
 .PP
 $ sysdig fd.name contains /etc
+.PD 0
+.P
+.PD
+$ sysdig "evt.type in ( \[aq]select\[aq], \[aq]poll\[aq] )"
+.PD 0
+.P
+.PD
+$ sysdig proc.name exists
 .RE
 .PP
 Multiple checks can be combined through brakets and the following
@@ -303,6 +316,7 @@ Print progress on stderr while processing trace files.
 .P
 .PD
 Specify the format to be used when printing the events.
+With \-pc or \-pcontainer will use a container\-friendly format.
 See the examples section below for more info.
 .PP
 \f[B]\-q\f[], \f[B]\-\-quiet\f[]
@@ -401,6 +415,13 @@ Read events from a file and print them to screen
 .RS
 .PP
 $ sysdig \-r dumpfile.scap
+.RE
+.PP
+Prepare a sanitized version of a system capture
+.RS
+.PP
+$ sysdig \-r dumpfile.scap \[aq]not evt.buffer contains foo\[aq] \-w
+cleandump.scap
 .RE
 .PP
 Print all the open system calls invoked by cat
