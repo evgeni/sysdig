@@ -99,6 +99,9 @@ uint32_t lua_cbacks::rawval_to_lua_stack(lua_State *ls, uint8_t* rawval, const f
 		case PT_ABSTIME:
 			lua_pushnumber(ls, (double)*(uint64_t*)rawval);
 			return 1;
+		case PT_DOUBLE:
+			lua_pushnumber(ls, *(double*)rawval);
+			return 1;
 		case PT_CHARBUF:
 			lua_pushstring(ls, (char*)rawval);
 			return 1;
@@ -275,7 +278,7 @@ int lua_cbacks::request_field(lua_State *ls)
 		throw sinsp_exception("chisel error");
 	}
 
-	chk->parse_field_name(fld);
+	chk->parse_field_name(fld, true);
 
 	lua_pushlightuserdata(ls, chk);
 

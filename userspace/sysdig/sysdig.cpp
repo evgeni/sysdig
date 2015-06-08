@@ -17,6 +17,7 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #define __STDC_FORMAT_MACROS
+
 #include <stdio.h>
 #include <iostream>
 #include <time.h>
@@ -27,8 +28,9 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #include <algorithm>
 
 #include <sinsp.h>
-#include "sysdig.h"
 #include "chisel.h"
+#include "sysdig.h"
+#include "utils.h"
 
 #ifdef _WIN32
 #include "win32/getopt.h"
@@ -43,12 +45,11 @@ static bool g_terminate = false;
 vector<sinsp_chisel*> g_chisels;
 #endif
 
-
-
+//
 // Sysdig 0.1.85 had log-rotation options (-C,-G,-W), but they were problematic,
 // so I'm disabling them until they can be fixed
+//
 #define DISABLE_CGW
-
 
 static void usage();
 
@@ -58,22 +59,6 @@ static void usage();
 static void signal_callback(int signal)
 {
 	g_terminate = true;
-}
-
-void replace_in_place(string& str, string substr_to_replace, string new_substr)
-{
-	size_t index = 0;
-	uint32_t nsize = (uint32_t)substr_to_replace.size();
-
-	while (true)
-	{
-		 index = str.find(substr_to_replace, index);
-		 if (index == string::npos) break;
-
-		 str.replace(index, nsize, new_substr);
-
-		 index += nsize;
-	}
 }
 
 //
@@ -914,7 +899,15 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 				delete inspector;
 				return sysdig_init_res(EXIT_SUCCESS);
 			case 'n':
-				cnt = atoi(optarg);
+				try
+				{
+					cnt = sinsp_numparser::parseu64(optarg);
+				}
+				catch(...)
+				{
+					throw sinsp_exception("can't parse the -n argument, make sure it's a number");
+				}
+
 				if(cnt <= 0)
 				{
 					throw sinsp_exception(string("invalid event count ") + optarg);
@@ -943,10 +936,10 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 					//
 					// This enables chisels to determine if they should print container information
 					//
-					if ( inspector != NULL )
-                                        {
-                                           inspector->set_print_container_data( true );
-                                        }
+					if(inspector != NULL)
+					{
+						inspector->set_print_container_data(true);
+					}
 				}
 				else
 				{
@@ -1256,6 +1249,11 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 
 					inspector->open("");
 				}
+
+				//
+				// Enable gathering the CPU from the kernel module
+				//
+				inspector->set_get_procs_cpu_from_driver(true);
 			}
 
 			if(snaplen != 0)
@@ -1306,7 +1304,6 @@ sysdig_init_res sysdig_init(int argc, char **argv)
 			// Done. Close the capture.
 			//
 			inspector->close();
-
 		}
 	}
 	catch(sinsp_capture_interrupt_exception&)

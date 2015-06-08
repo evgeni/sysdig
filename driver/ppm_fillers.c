@@ -120,6 +120,9 @@ static int f_sys_quotactl_e(struct event_filler_arguments *args);
 static int f_sys_quotactl_x(struct event_filler_arguments *args);
 static int f_sys_sysdigevent_e(struct event_filler_arguments *args);
 static int f_sys_getresuid_and_gid_x(struct event_filler_arguments *args);
+#ifdef CAPTURE_SIGNAL_DELIVERIES
+static int f_sys_signaldeliver_e(struct event_filler_arguments *args);
+#endif
 
 /*
  * Note, this is not part of g_event_info because we want to share g_event_info with userland.
@@ -322,6 +325,14 @@ const struct ppm_event_entry g_ppm_events[PPM_EVENT_MAX] = {
 	[PPME_SYSCALL_GETRESUID_X] = {f_sys_getresuid_and_gid_x},
 	[PPME_SYSCALL_GETRESGID_E] = {f_sys_empty},
 	[PPME_SYSCALL_GETRESGID_X] = {f_sys_getresuid_and_gid_x},
+#ifdef CAPTURE_SIGNAL_DELIVERIES
+	[PPME_SIGNALDELIVER_E] = {f_sys_signaldeliver_e},
+	[PPME_SIGNALDELIVER_X] = {f_sys_empty},
+#endif
+	[PPME_SYSCALL_GETDENTS_E] = {f_sys_single},
+	[PPME_SYSCALL_GETDENTS_X] = {f_sys_single_x},
+	[PPME_SYSCALL_GETDENTS64_E] = {f_sys_single},
+	[PPME_SYSCALL_GETDENTS64_X] = {f_sys_single_x},
 };
 
 /*
@@ -3094,6 +3105,9 @@ static int f_sys_prlimit_x(struct event_filler_arguments *args)
 }
 
 #ifdef CAPTURE_CONTEXT_SWITCHES
+extern void task_times(struct task_struct *p, cputime_t *ut, cputime_t *st);
+void thread_group_cputime(struct task_struct *tsk, struct task_cputime *times);
+
 static int f_sched_switch_e(struct event_filler_arguments *args)
 {
 	int res;
@@ -3156,17 +3170,17 @@ static int f_sched_switch_e(struct event_filler_arguments *args)
 	if (unlikely(res != PPM_SUCCESS))
 		return res;
 
-/*
-	//
-	// steal
-	//
+#if 0
+	/*
+	 * steal
+	 */
 	steal = cputime64_to_clock_t(kcpustat_this_cpu->cpustat[CPUTIME_STEAL]);
 	res = val_to_ring(args, steal, 0, false);
 	if(unlikely(res != PPM_SUCCESS))
 	{
 		return res;
 	}
-*/
+#endif
 
 	return add_sentinel(args);
 }
@@ -4288,3 +4302,33 @@ static int f_sys_getresuid_and_gid_x(struct event_filler_arguments *args)
 
 	return add_sentinel(args);
 }
+
+#ifdef CAPTURE_SIGNAL_DELIVERIES
+static int f_sys_signaldeliver_e(struct event_filler_arguments *args)
+{
+	int res;
+
+	/*
+	 * source pid
+	 */
+	res = val_to_ring(args, args->spid, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * destination pid
+	 */
+	res = val_to_ring(args, args->dpid, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	/*
+	 * signal number
+	 */
+	res = val_to_ring(args, args->signo, 0, false, 0);
+	if (unlikely(res != PPM_SUCCESS))
+		return res;
+
+	return add_sentinel(args);
+}
+#endif

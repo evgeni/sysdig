@@ -16,6 +16,8 @@ You should have received a copy of the GNU General Public License
 along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include<linux/version.h>
+
 /*
  * Our Own ASSERT implementation, so we can easily switch among BUG_ON, WARN_ON and nothing
  */
@@ -31,6 +33,9 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
  * Global defines
  */
 #define CAPTURE_CONTEXT_SWITCHES
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 32))
+#define CAPTURE_SIGNAL_DELIVERIES
+#endif
 #define RW_SNAPLEN 80
 #define RW_SNAPLEN_EVENT 4096
 #define RW_MAX_SNAPLEN (256 * 1024 * 1024)
@@ -116,3 +121,4 @@ extern const enum ppm_syscall_code g_syscall_code_routing_table[];
 
 #define PPM_PORT_MYSQL 3306
 #define PPM_PORT_POSTGRES 5432
+#define PPM_PORT_STATSD 8125

@@ -11,6 +11,8 @@ SYNOPSIS
 DESCRIPTION
 -----------
 
+**Note: if you are interested in an easier to use interface for the sysdig functionality, use the csysdig command line utility.**
+
 sysdig is a tool for system troubleshooting, analysis and exploration. It can be used to capture, filter and decode system calls and other OS events. 
 sysdig can be both used to inspect live systems, or to generate trace files that can be analyzed at a later stage.
 
@@ -61,7 +63,7 @@ Filter expressions can use one of these comparison operators: _=_, _!=_, _<_, _<
 > $ sysdig "evt.type in ( 'select', 'poll' )"
 > $ sysdig proc.name exists
 
-Multiple checks can be combined through brakets and the following boolean operators: _and_, _or_, _not_. e.g.
+Multiple checks can be combined through brackets and the following boolean operators: _and_, _or_, _not_. e.g.
 > $ sysdig "not (fd.name contains /proc or fd.name contains /dev)"
 
 **Chisels**  
@@ -213,9 +215,9 @@ BUGS
 AUTHOR
 ------
 
-Draios inc. <info@draios.com>
+Draios Inc. aka sysdig <info@sysdigcloud.com>
 
 SEE ALSO
 --------
 
-**strace**(8), **tcpdump**(8), **lsof**(8)
+**csysdig**(8), **strace**(8), **tcpdump**(8), **lsof**(8)

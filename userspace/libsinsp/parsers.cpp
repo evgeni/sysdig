@@ -92,6 +92,7 @@ void sinsp_parser::process_event(sinsp_evt *evt)
 			etype != PPME_DROP_E &&
 			etype != PPME_DROP_X &&
 			etype != PPME_SYSDIGEVENT_E &&
+			etype != PPME_PROCINFO_E &&
 			m_inspector->m_sysdig_pid)
 		{
 			evt->m_filtered_out = true;
@@ -661,7 +662,7 @@ void sinsp_parser::register_event_callback(sinsp_pd_callback_type etype, sinsp_p
 ///////////////////////////////////////////////////////////////////////////////
 void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
 {
-	sinsp_evt_param *parinfo;
+	sinsp_evt_param* parinfo;
 	int64_t tid = evt->get_tid();
 	int64_t childtid;
 	bool is_inverted_clone = false; // true if clone() in the child returns before the one in the parent

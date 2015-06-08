@@ -34,6 +34,7 @@ along with sysdig.  If not, see <http://www.gnu.org/licenses/>.
 #include "chisel_api.h"
 #include "filter.h"
 #include "filterchecks.h"
+#include "table.h"
 
 #ifdef HAS_CHISELS
 #define HAS_LUA_CHISELS
@@ -347,11 +348,415 @@ void sinsp_chisel::add_lua_package_path(lua_State* ls, const char* path)
 }
 #endif
 
+sinsp_field_aggregation sinsp_chisel::string_to_aggregation(string ag)
+{
+	sinsp_field_aggregation res = A_NONE;
+
+	if(ag == "SUM")
+	{
+		res = A_SUM;
+	}
+	else if(ag == "AVG")
+	{
+		res = A_AVG;
+	}
+	else if(ag == "TIME_AVG")
+	{
+		res = A_TIME_AVG;
+	}
+	else if(ag == "MIN")
+	{
+		res = A_MIN;
+	}
+	else if(ag == "MAX")
+	{
+		res = A_MAX;
+	}
+	else
+	{
+		throw sinsp_exception("unknown view column aggregation " + ag);
+	}
+
+	return res;
+}
+
+void sinsp_chisel::parse_view_column(lua_State *ls, OUT chisel_desc* cd, OUT void* columns)
+{
+	vector<sinsp_view_column_info>* cols = (vector<sinsp_view_column_info>*)columns;
+
+	lua_pushnil(ls);
+
+	string tmpstr;
+	string name;
+	string description;
+	string field;
+	uint32_t colsize = 0xffffffff;
+	uint32_t flags = TEF_NONE;
+	sinsp_field_aggregation aggregation = A_NONE;
+	sinsp_field_aggregation groupby_aggregation = A_NONE;
+	vector<string> tags;
+
+	while(lua_next(ls, -2) != 0)
+	{
+		string fldname = lua_tostring(ls, -2);
+
+		if(fldname == "name")
+		{
+			name = lua_tostring(ls, -1);
+		}
+		else if(fldname == "description")
+		{
+			description = lua_tostring(ls, -1);
+		}
+		else if(fldname == "field")
+		{
+			field = lua_tostring(ls, -1);
+		}
+		else if(fldname == "colsize")
+		{
+			if(lua_isnumber(ls, -1))
+			{
+				colsize = (uint32_t)lua_tonumber(ls, -1);
+			}
+			else
+			{
+				throw sinsp_exception(string(lua_tostring(ls, -2)) + " must be a number");
+			}
+		}
+		else if(fldname == "is_key")
+		{
+			if(lua_isboolean(ls, -1))
+			{
+				bool ik = (lua_toboolean(ls, -1) != 0);
+				if(ik)
+				{
+					flags |= TEF_IS_KEY;
+				}
+			}
+			else
+			{
+				throw sinsp_exception(string(lua_tostring(ls, -2)) + " must be a boolean value");
+			}
+		}
+		else if(fldname == "is_groupby_key")
+		{
+			if(lua_isboolean(ls, -1))
+			{
+				bool ik = (lua_toboolean(ls, -1) != 0);
+				if(ik)
+				{
+					flags |= TEF_IS_GROUPBY_KEY;
+				}
+			}
+			else
+			{
+				throw sinsp_exception(string(lua_tostring(ls, -2)) + " must be a boolean value");
+			}
+		}
+		else if(fldname == "is_sorting")
+		{
+			if(lua_isboolean(ls, -1))
+			{
+				bool ik = (lua_toboolean(ls, -1) != 0);
+				if(ik)
+				{
+					flags |= TEF_IS_SORT_COLUMN;
+				}
+			}
+			else
+			{
+				throw sinsp_exception(string(lua_tostring(ls, -2)) + " must be a boolean value");
+			}
+		}
+		else if(fldname == "aggregation")
+		{
+			if(lua_isstring(ls, -1))
+			{
+				string ag = lua_tostring(ls, -1);
+
+				aggregation = string_to_aggregation(ag);
+			}
+		}
+		else if(fldname == "groupby_aggregation")
+		{
+			if(lua_isstring(ls, -1))
+			{
+				string ag = lua_tostring(ls, -1);
+
+				groupby_aggregation = string_to_aggregation(ag);
+			}
+		}
+		else if(fldname == "tags")
+		{
+			if(lua_istable(ls, -1))
+			{
+				lua_pushnil(ls);
+
+				while(lua_next(ls, -2) != 0)
+				{
+					if(lua_isstring(ls, -1))
+					{
+						tmpstr = lua_tostring(ls, -1);
+						tags.push_back(tmpstr);
+					}
+					else
+					{
+						throw sinsp_exception("tags column entries must be strings");
+					}
+
+					lua_pop(ls, 1);
+				}
+			}
+			else
+			{
+				throw sinsp_exception(string(lua_tostring(ls, -2)) + " is not a table");
+			}
+		}
+
+		lua_pop(ls, 1);
+	}
+
+	cols->push_back(sinsp_view_column_info(field, 
+		name,
+		description,
+		colsize, 
+		(uint32_t)flags, 
+		aggregation, 
+		groupby_aggregation,
+		tags));
+}
+
+void sinsp_chisel::parse_view_columns(lua_State *ls, OUT chisel_desc* cd, OUT void* columns)
+{
+	string name;
+	string type;
+	string desc;
+
+	lua_pushnil(ls);
+
+	while(lua_next(ls, -2) != 0)
+	{
+		if(lua_istable(ls, -1))
+		{
+			parse_view_column(ls, cd, columns);
+		}
+		else
+		{
+			throw sinsp_exception("view_info column entries must be strings");
+		}
+
+		lua_pop(ls, 1);
+	}
+}
+
+bool sinsp_chisel::parse_view_info(lua_State *ls, OUT chisel_desc* cd)
+{
+	lua_getglobal(ls, "view_info");
+	if(lua_isnoneornil(ls, -1))
+	{
+		lua_close(ls);
+		return false;
+	}
+
+	lua_pushnil(ls);
+
+	string tmpstr;
+	string id;
+	string name;
+	string description;
+	vector<string> applies_to;
+	string filter;
+	bool use_defaults = false;
+	sinsp_view_info::viewtype vt = sinsp_view_info::T_TABLE;
+	vector<sinsp_view_column_info> columns;
+	vector<string> tags;
+	vector<string> tips;
+	string drilldown_target;
+	bool is_root = false;
+
+	while(lua_next(ls, -2) != 0)
+	{
+		string fldname = lua_tostring(ls, -2);
+
+		if(fldname == "name")
+		{
+			name = lua_tostring(ls, -1);
+		}
+		else if(fldname == "id")
+		{
+			id = lua_tostring(ls, -1);
+		}
+		else if(fldname == "description")
+		{
+			description = lua_tostring(ls, -1);
+		}
+		else if(fldname == "tags")
+		{
+			if(lua_istable(ls, -1))
+			{
+				lua_pushnil(ls);
+
+				while(lua_next(ls, -2) != 0)
+				{
+					if(lua_isstring(ls, -1))
+					{
+						tmpstr = lua_tostring(ls, -1);
+						tags.push_back(tmpstr);
+					}
+					else
+					{
+						throw sinsp_exception("error in view " + cd->m_name + ": " + "tags entries must be strings");
+					}
+
+					lua_pop(ls, 1);
+				}
+			}
+			else
+			{				
+				throw sinsp_exception("error in view " + cd->m_name + ": " + string(lua_tostring(ls, -2)) + " is not a table");
+			}
+		}
+		else if(fldname == "tips")
+		{
+			if(lua_istable(ls, -1))
+			{
+				lua_pushnil(ls);
+
+				while(lua_next(ls, -2) != 0)
+				{
+					if(lua_isstring(ls, -1))
+					{
+						tmpstr = lua_tostring(ls, -1);
+						tips.push_back(tmpstr);
+					}
+					else
+					{
+						throw sinsp_exception("error in view " + cd->m_name + ": " + "tips column entries must be strings");
+					}
+
+					lua_pop(ls, 1);
+				}
+			}
+			else
+			{				
+				throw sinsp_exception("error in view " + cd->m_name + ": " + string(lua_tostring(ls, -2)) + " is not a table");
+			}
+		}
+		else if(fldname == "view_type")
+		{
+			tmpstr = lua_tostring(ls, -1);
+
+			if(tmpstr == "table")
+			{
+				vt = sinsp_view_info::T_TABLE;
+			}
+			else if(tmpstr == "list")
+			{
+				vt = sinsp_view_info::T_LIST;
+			}
+			else
+			{
+				throw sinsp_exception("error in view " + cd->m_name + ": " + string(lua_tostring(ls, -2)) + " must be either 'table' or 'list'");
+			}
+		}
+		else if(fldname == "drilldown_target")
+		{
+			drilldown_target = lua_tostring(ls, -1);
+		}
+		else if(fldname == "applies_to")
+		{
+			if(lua_istable(ls, -1))
+			{
+				lua_pushnil(ls);
+
+				while(lua_next(ls, -2) != 0)
+				{
+					if(lua_isstring(ls, -1))
+					{
+						tmpstr = lua_tostring(ls, -1);
+						applies_to.push_back(tmpstr);
+					}
+					else
+					{
+						throw sinsp_exception("error in view " + cd->m_name + ": " + "tips column entries must be strings");
+					}
+
+					lua_pop(ls, 1);
+				}
+			}
+			else
+			{
+				throw sinsp_exception("error in view " + cd->m_name + ": " + string(lua_tostring(ls, -2)) + " is not a table");
+			}
+		}
+		else if(fldname == "filter")
+		{
+			filter = lua_tostring(ls, -1);
+		}
+		else if(fldname == "use_defaults")
+		{
+			if(lua_isboolean(ls, -1))
+			{
+				use_defaults = (lua_toboolean(ls, -1) != 0);
+			}
+			else
+			{
+				throw sinsp_exception("error in view " + cd->m_name + ": " + string(lua_tostring(ls, -2)) + " must be a boolean");
+			}
+		}
+		else if(fldname == "is_root")
+		{
+			if(lua_isboolean(ls, -1))
+			{
+				is_root = (lua_toboolean(ls, -1) != 0);
+			}
+			else
+			{
+				throw sinsp_exception("error in view " + cd->m_name + ": " + string(lua_tostring(ls, -2)) + " must be a boolean");
+			}
+		}
+		else if(fldname == "columns")
+		{
+			if(lua_istable(ls, -1))
+			{
+				parse_view_columns(ls, cd, &columns);
+			}
+			else
+			{
+				throw sinsp_exception("error in view " + cd->m_name + ": " + string(lua_tostring(ls, -2)) + " is not a table");
+			}
+		}
+
+		lua_pop(ls, 1);
+	}
+
+	cd->m_viewinfo = sinsp_view_info(vt,
+		id,
+		name,
+		description,
+		tags,
+		tips,
+		columns,
+		applies_to,
+		filter,
+		drilldown_target,
+		use_defaults,
+		is_root);
+
+	return true;
+}
+
+
 #ifdef HAS_LUA_CHISELS
 // Initializes a lua chisel
 bool sinsp_chisel::init_lua_chisel(chisel_desc &cd, string const &fpath)
 {
 	lua_State* ls = lua_open();
+	if(ls == NULL)
+	{
+		return false;
+	}
+
 	luaL_openlibs(ls);
 
 	//
@@ -386,7 +791,7 @@ bool sinsp_chisel::init_lua_chisel(chisel_desc &cd, string const &fpath)
 	lua_getglobal(ls, "description");
 	if(!lua_isstring(ls, -1))
 	{
-		goto failure;
+		return parse_view_info(ls, &cd);
 	}
 	cd.m_description = lua_tostring(ls, -1);
 
@@ -427,6 +832,11 @@ bool sinsp_chisel::init_lua_chisel(chisel_desc &cd, string const &fpath)
 	// Extract the args
 	//
 	lua_getglobal(ls, "args");
+	if(lua_isnoneornil(ls, -1))
+	{
+		goto failure;
+	}
+
 	try
 	{
 		parse_lua_chisel_args(ls, &cd);
@@ -435,6 +845,7 @@ bool sinsp_chisel::init_lua_chisel(chisel_desc &cd, string const &fpath)
 	{
 		goto failure;
 	}
+
 	return true;
 
 failure:
@@ -481,8 +892,11 @@ void sinsp_chisel::get_chisel_list(vector<chisel_desc>* chisel_descs)
 		{
 			continue;
 		}
+
 		tinydir_dir dir;
+
 		tinydir_open(&dir, it->m_dir);
+
 		while(dir.has_next)
 		{
 			tinydir_file file;
@@ -522,6 +936,7 @@ void sinsp_chisel::get_chisel_list(vector<chisel_desc>* chisel_descs)
 next_file:
 			tinydir_next(&dir);
 		}
+
 		tinydir_close(&dir);
 	}
 }
@@ -892,10 +1307,8 @@ void sinsp_chisel::on_init()
 
 void sinsp_chisel::first_event_inits(sinsp_evt* evt)
 {
-	lua_pushlightuserdata(m_ls, evt);
-	lua_setglobal(m_ls, "sievt");
-
 	uint64_t ts = evt->get_ts();
+
 	if(m_lua_cinfo->m_callback_interval != 0)
 	{
 		m_lua_last_interval_sample_time = ts - ts % m_lua_cinfo->m_callback_interval;
@@ -910,6 +1323,12 @@ bool sinsp_chisel::run(sinsp_evt* evt)
 	string line;
 
 	ASSERT(m_ls);
+
+	//
+	// Make the event available to the API
+	//
+	lua_pushlightuserdata(m_ls, evt);
+	lua_setglobal(m_ls, "sievt");
 
 	//
 	// If this is the first event, put the event pointer on the stack.
@@ -981,7 +1400,7 @@ void sinsp_chisel::do_timeout(sinsp_evt* evt)
 {
 	if(m_lua_is_first_evt)
 	{
-		first_event_inits(evt);
+		return;
 	}
 
 	if(m_lua_cinfo->m_callback_interval != 0)
