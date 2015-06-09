@@ -1,5 +1,6 @@
 usr/share/sysdig/chisels/*.lua
 usr/share/man
 usr/bin/sysdig
+usr/bin/csysdig
 usr/share/zsh/vendor-completions
 etc/bash_completion.d/sysdig usr/share/bash-completion/completions/
