@@ -19,7 +19,7 @@ sver:=$(shell dpkg-parsechangelog|grep "^Version:"|cut -d" " -f2|sed -r 's/-[^-]
 	dh $@ --parallel
 
 override_dh_auto_configure:
-	dh_auto_configure -- -DUSE_BUNDLED_JSONCPP=OFF -DUSE_BUNDLED_LUAJIT=OFF -DUSE_BUNDLED_ZLIB=OFF -DBUILD_DRIVER=OFF -DDIR_ETC="/etc" -DSYSDIG_VERSION="$(sver)"
+	dh_auto_configure -- -DUSE_BUNDLED_JSONCPP=OFF -DUSE_BUNDLED_LUAJIT=OFF -DUSE_BUNDLED_ZLIB=OFF -DUSE_BUNDLED_NCURSES=OFF -DBUILD_DRIVER=OFF -DDIR_ETC="/etc" -DSYSDIG_VERSION="$(sver)"
 
 override_dh_auto_install-indep:
 	dh_auto_install -i
