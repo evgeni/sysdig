@@ -5,7 +5,7 @@ Maintainer: Evgeni Golov <evgeni@debian.org>
 Uploaders: Harlan Lieberman-Berg <hlieberman@setec.io>
 Build-Depends: debhelper (>= 9), cmake, pandoc (>= 1.11),
  libluajit-5.1-dev [i386 amd64 kfreebsd-i386 armel armhf powerpc powerpcspe mips mipsel] | liblua5.1-0-dev,
- libjsoncpp-dev, zlib1g-dev
+ libjsoncpp-dev, libncurses5-dev, zlib1g-dev
 Build-Depends-Indep: dkms
 Standards-Version: 3.9.6
 Homepage: http://www.sysdig.org/
