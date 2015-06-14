@@ -1,3 +1,13 @@
+sysdig (0.1.101-1) unstable; urgency=medium
+
+  * New upstream release.
+  * add Build-Depends on libncurses5-dev, needed for csysdig
+  * install csysdig binary
+  * drop 0001-fix-length-spelling.patch, applied upstream
+  * force use of system ncurses
+
+ -- Evgeni Golov <evgeni@debian.org>  Sun, 14 Jun 2015 11:59:02 +0200
+
 sysdig (0.1.99-1) unstable; urgency=medium
 
   [ Harlan Lieberman-Berg ]
