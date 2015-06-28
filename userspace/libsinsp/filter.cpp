@@ -466,7 +466,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
 			else
 			{
 				ASSERT(false);
-				return Json::Value::null;
+				return Json::Value::nullRef;
 			}
 
 		case PT_INT16:
@@ -482,7 +482,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
 			else
 			{
 				ASSERT(false);
-				return Json::Value::null;
+				return Json::Value::nullRef;
 			}
 
 		case PT_INT32:
@@ -498,7 +498,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
 			else
 			{
 				ASSERT(false);
-				return Json::Value::null;
+				return Json::Value::nullRef;
 			}
 
 		case PT_INT64:
@@ -527,7 +527,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
 			else
 			{
 				ASSERT(false);
-				return Json::Value::null;
+				return Json::Value::nullRef;
 			}
 
 		case PT_PORT: // This can be resolved in the future
@@ -544,7 +544,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
 			else
 			{
 				ASSERT(false);
-				return Json::Value::null;
+				return Json::Value::nullRef;
 			}
 
 		case PT_UINT32:
@@ -560,7 +560,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
 			else
 			{
 				ASSERT(false);
-				return Json::Value::null;
+				return Json::Value::nullRef;
 			}
 
 		case PT_UINT64:
@@ -580,13 +580,13 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
 			else
 			{
 				ASSERT(false);
-				return Json::Value::null;
+				return Json::Value::nullRef;
 			}
 
 		case PT_SOCKADDR:
 		case PT_SOCKFAMILY:
 			ASSERT(false);
-			return Json::Value::null;
+			return Json::Value::nullRef;
 
 		case PT_BOOL:
 			return Json::Value((bool)(*(uint32_t*)rawval != 0));
@@ -946,12 +946,13 @@ Json::Value sinsp_filter_check::tojson(sinsp_evt* evt)
 	uint32_t len;
 	Json::Value jsonval = extract_as_js(evt, &len);
 
-	if(jsonval == Json::Value::null)
+	if(jsonval == Json::Value::nullRef)
 	{
 		uint8_t* rawval = extract(evt, &len);
 		if(rawval == NULL)
 		{
-			return Json::Value::null;
+			return Json::Value::nullRef
+;
 		}
 		return rawval_to_json(rawval, m_field, len);
 	}
