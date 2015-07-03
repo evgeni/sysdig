@@ -1,0 +1,165 @@
+commit 28efbf676c2e9c5feabdc72b1f9bdbf68cde3303
+Author: Evgeni Golov <evgeni@debian.org>
+Date:   Sun Jun 28 16:27:35 2015 +0200
+
+    use Json::Value::nullRef instead of Json::Value::null
+    
+    null is deprecated upstream
+    
+    refs #377
+
+diff --git a/userspace/libsinsp/event.cpp b/userspace/libsinsp/event.cpp
+index 01cdce4..532ce5b 100644
+--- a/userspace/libsinsp/event.cpp
++++ b/userspace/libsinsp/event.cpp
+@@ -874,7 +874,7 @@ Json::Value sinsp_evt::get_param_as_json(uint32_t id, OUT const char** resolved_
+ 	case PT_SOCKADDR:
+ 		if(payload_len == 0)
+ 		{
+-			ret = Json::Value::null;
++			ret = Json::Value::nullRef;
+ 			break;
+ 		}
+ 		else if(payload[0] == AF_UNIX)
+@@ -923,7 +923,7 @@ Json::Value sinsp_evt::get_param_as_json(uint32_t id, OUT const char** resolved_
+ 	case PT_SOCKTUPLE:
+ 		if(payload_len == 0)
+ 		{
+-			ret = Json::Value::null;
++			ret = Json::Value::nullRef;
+ 			break;
+ 		}
+ 
+diff --git a/userspace/libsinsp/eventformatter.cpp b/userspace/libsinsp/eventformatter.cpp
+index 16f2bde..2fa3bca 100644
+--- a/userspace/libsinsp/eventformatter.cpp
++++ b/userspace/libsinsp/eventformatter.cpp
+@@ -198,7 +198,7 @@ bool sinsp_evt_formatter::tostring(sinsp_evt* evt, OUT string* res)
+ 				continue;
+ 			}
+ 
+-			if(json_value == Json::Value::null && m_require_all_values)
++			if(json_value == Json::Value::nullRef && m_require_all_values)
+ 			{
+ 				retval = false;
+ 				continue;
+diff --git a/userspace/libsinsp/filter.cpp b/userspace/libsinsp/filter.cpp
+index 2a8d6f4..7fe5455 100644
+--- a/userspace/libsinsp/filter.cpp
++++ b/userspace/libsinsp/filter.cpp
+@@ -467,7 +467,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
+ 			else
+ 			{
+ 				ASSERT(false);
+-				return Json::Value::null;
++				return Json::Value::nullRef;
+ 			}
+ 
+ 		case PT_INT16:
+@@ -483,7 +483,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
+ 			else
+ 			{
+ 				ASSERT(false);
+-				return Json::Value::null;
++				return Json::Value::nullRef;
+ 			}
+ 
+ 		case PT_INT32:
+@@ -499,7 +499,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
+ 			else
+ 			{
+ 				ASSERT(false);
+-				return Json::Value::null;
++				return Json::Value::nullRef;
+ 			}
+ 
+ 		case PT_INT64:
+@@ -528,7 +528,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
+ 			else
+ 			{
+ 				ASSERT(false);
+-				return Json::Value::null;
++				return Json::Value::nullRef;
+ 			}
+ 
+ 		case PT_PORT: // This can be resolved in the future
+@@ -545,7 +545,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
+ 			else
+ 			{
+ 				ASSERT(false);
+-				return Json::Value::null;
++				return Json::Value::nullRef;
+ 			}
+ 
+ 		case PT_UINT32:
+@@ -561,7 +561,7 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
+ 			else
+ 			{
+ 				ASSERT(false);
+-				return Json::Value::null;
++				return Json::Value::nullRef;
+ 			}
+ 
+ 		case PT_UINT64:
+@@ -581,13 +581,13 @@ Json::Value sinsp_filter_check::rawval_to_json(uint8_t* rawval, const filterchec
+ 			else
+ 			{
+ 				ASSERT(false);
+-				return Json::Value::null;
++				return Json::Value::nullRef;
+ 			}
+ 
+ 		case PT_SOCKADDR:
+ 		case PT_SOCKFAMILY:
+ 			ASSERT(false);
+-			return Json::Value::null;
++			return Json::Value::nullRef;
+ 
+ 		case PT_BOOL:
+ 			return Json::Value((bool)(*(uint32_t*)rawval != 0));
+@@ -947,12 +947,13 @@ Json::Value sinsp_filter_check::tojson(sinsp_evt* evt)
+ 	uint32_t len;
+ 	Json::Value jsonval = extract_as_js(evt, &len);
+ 
+-	if(jsonval == Json::Value::null)
++	if(jsonval == Json::Value::nullRef)
+ 	{
+ 		uint8_t* rawval = extract(evt, &len);
+ 		if(rawval == NULL)
+ 		{
+-			return Json::Value::null;
++			return Json::Value::nullRef
++;
+ 		}
+ 		return rawval_to_json(rawval, m_field, len);
+ 	}
+diff --git a/userspace/libsinsp/filterchecks.cpp b/userspace/libsinsp/filterchecks.cpp
+index ba1c793..a0810a5 100644
+--- a/userspace/libsinsp/filterchecks.cpp
++++ b/userspace/libsinsp/filterchecks.cpp
+@@ -2433,10 +2433,10 @@ Json::Value sinsp_filter_check_event::extract_as_js(sinsp_evt *evt, OUT uint32_t
+ 		return m_u32val;
+ 
+ 	default:
+-		return Json::Value::null;
++		return Json::Value::nullRef;
+ 	}
+ 
+-	return Json::Value::null;
++	return Json::Value::nullRef;
+ }
+ 
+ uint8_t* sinsp_filter_check_event::extract_error_count(sinsp_evt *evt, OUT uint32_t* len)
+diff --git a/userspace/libsinsp/filterchecks.h b/userspace/libsinsp/filterchecks.h
+index a51ef5a..a1f293e 100644
+--- a/userspace/libsinsp/filterchecks.h
++++ b/userspace/libsinsp/filterchecks.h
+@@ -97,7 +97,7 @@ public:
+ 	//
+ 	virtual Json::Value extract_as_js(sinsp_evt *evt, OUT uint32_t* len)
+ 	{
+-		return Json::Value::null;
++		return Json::Value::nullRef;
+ 	}
+ 
+ 	//
