@@ -684,7 +684,7 @@ void curses_textbox::process_event_spy(sinsp_evt* evt, int32_t next_res)
 	}
 
 	//
-	// Get and validate the lenght
+	// Get and validate the length
 	//
 	sinsp_evt_param* parinfo = evt->get_param(0);
 	ASSERT(parinfo->m_len == sizeof(int64_t));
@@ -793,6 +793,11 @@ void curses_textbox::process_event_spy(sinsp_evt* evt, int32_t next_res)
 
 void curses_textbox::process_event_dig(sinsp_evt* evt, int32_t next_res)
 {
+	if(!m_inspector->is_debug_enabled() && evt->get_category() & EC_INTERNAL)
+	{
+		return;
+	}
+
 	string line;
 
 	m_formatter->tostring(evt, &line);
@@ -1497,8 +1502,8 @@ curses_mainhelp_page::curses_mainhelp_page(sinsp_cursesui* parent)
 
 	wattrset(m_win, parent->m_colors[sinsp_cursesui::PROCESS]);
 	m_ctext->printf(
-"You drill down by selecting an element in a view and then clicking enter. Once inside a selection, you can switch to a different view, and the new view will be applied in the context of the selection. For example, if you drill down into a process called foo and then switch to the Connections view, the output will include only the connections made or recieved by foo.\n\n"
-"You can drill down multiple times, by keeping clicking enter. For example, you can click on a container in the Containers view to get the processes running inside it, and then click on one of the processes to see its threads.\n"
+"You drill down by selecting an element in a view and then clicking enter. Once inside a selection, you can switch to a different view, and the new view will be applied in the context of the selection. For example, if you drill down into a process called foo and then switch to the Connections view, the output will include only the connections made or received by foo.\n\n"
+"You can drill down multiple times, by keeping clicking enter. For example, you can click on a container in the Containers view to get the processes running inside it, and then click on one of the processes to see its threads.\n\n"
 );
 
 	wattrset(m_win, parent->m_colors[sinsp_cursesui::HELP_BOLD]);
@@ -1653,6 +1658,26 @@ curses_mainhelp_page::curses_mainhelp_page(sinsp_cursesui* parent)
 	m_ctext->printf("csysdig is completely customizable. This means that you can modify any of the csysdig views, " 
 		"and even create your own views. Like sysdig chisels, csysdig views are Lua scripts. Full information can "
 		"be found at the following github wiki page: https://github.com/draios/sysdig/wiki/csysdig-View-Format-Reference.\n");
+
+	//
+	// sysdig cloud
+	//
+	wattrset(m_win, parent->m_colors[sinsp_cursesui::HELP_BOLD]);
+	m_ctext->printf("\nNeed a distributed csysdig?\n",
+		g_version_string.c_str());
+
+	wattrset(m_win, parent->m_colors[sinsp_cursesui::PROCESS]);
+	m_ctext->printf("Sysdig cloud offers distributed csysdig functionality, a powerful web interface and much more.\nwww.sysdig.com.\n");
+
+	//
+	// Bottom padding to compensate for a ctext bug
+	//
+	uint64_t trlen = ((parent->m_screenh * 230 / parent->m_screenw)) / 10;
+
+	for(uint32_t j = 0; j < trlen; j++)
+	{
+		m_ctext->printf("\n");
+	}
 
 	//
 	// Done. Refresh the screen

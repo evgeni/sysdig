@@ -26,7 +26,9 @@
 #include "ppm_events.h"
 #include "ppm.h"
 
+#ifndef cmpxchg_cputime
 #define cmpxchg_cputime(ptr, old, new) cmpxchg(ptr, old, new)
+#endif
 
 #ifdef CONFIG_VIRT_CPU_ACCOUNTING_GEN
 static unsigned long long vtime_delta(struct task_struct *tsk)
@@ -239,7 +241,11 @@ out:
 void ppm_task_cputime_adjusted(struct task_struct *p, cputime_t *ut, cputime_t *st)
 {
 	struct task_cputime cputime = {
+#ifdef CONFIG_SCHED_BFS
+		.sum_exec_runtime = tsk_seruntime(p),
+#else
 		.sum_exec_runtime = p->se.sum_exec_runtime,
+#endif
 	};
 
 	task_cputime(p, &cputime.utime, &cputime.stime);
