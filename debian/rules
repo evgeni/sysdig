@@ -4,6 +4,8 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
+include /usr/share/dpkg/pkg-info.mk
+
 # This has to be exported to make some magic below work.
 export DH_OPTIONS
 
@@ -12,18 +14,16 @@ export DH_OPTIONS
 export DEB_CFLAGS_MAINT_APPEND   = $(shell dpkg-buildflags --get CPPFLAGS)
 export DEB_CXXFLAGS_MAINT_APPEND = $(shell dpkg-buildflags --get CPPFLAGS)
 
-sver:=$(shell dpkg-parsechangelog|grep "^Version:"|cut -d" " -f2|sed -r 's/-[^-]+$$//')
-
 
 %:
 	dh $@ --parallel
 
 override_dh_auto_configure:
-	dh_auto_configure -- -DUSE_BUNDLED_JSONCPP=OFF -DUSE_BUNDLED_LUAJIT=OFF -DUSE_BUNDLED_ZLIB=OFF -DUSE_BUNDLED_NCURSES=OFF -DBUILD_DRIVER=OFF -DDIR_ETC="/etc" -DSYSDIG_VERSION="$(sver)"
+	dh_auto_configure -- -DUSE_BUNDLED_JSONCPP=OFF -DUSE_BUNDLED_LUAJIT=OFF -DUSE_BUNDLED_ZLIB=OFF -DUSE_BUNDLED_NCURSES=OFF -DBUILD_DRIVER=OFF -DDIR_ETC="/etc" -DSYSDIG_VERSION="$(DEB_VERSION_UPSTREAM)"
 
 override_dh_auto_install-indep:
 	dh_auto_install -i
-	dh_dkms -i -psysdig-dkms -- debian/tmp/usr/src/sysdig-$(sver)/dkms.conf
+	dh_dkms -i -psysdig-dkms -- debian/tmp/usr/src/sysdig-$(DEB_VERSION_UPSTREAM)/dkms.conf
 
 override_dh_install:
 	dh_install --list-missing
