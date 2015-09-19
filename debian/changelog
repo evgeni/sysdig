@@ -1,8 +1,8 @@
-sysdig (0.1.104-1) unstable; urgency=medium
+sysdig (0.2.0-1) unstable; urgency=medium
 
   * New upstream release.
 
- -- Harlan Lieberman-Berg <hlieberman@setec.io>  Sat, 05 Sep 2015 15:41:24 -0400
+ -- Harlan Lieberman-Berg <hlieberman@setec.io>  Sat, 19 Sep 2015 11:44:14 -0400
 
 sysdig (0.1.101-2) unstable; urgency=medium
 
